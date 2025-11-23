@@ -17,35 +17,104 @@ const IconHeart: React.FC<{ filled: boolean }> = ({ filled }) => (
 const IconShare = () => <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" /></svg>;
 
 const RulesContent = () => (
-  <div className="text-left text-lg space-y-3 text-[#cbdbfc] pb-4">
-    <div className="font-bold text-yellow-200 text-xl sticky top-0 bg-[#222034] py-2 z-10 border-b border-white/10">MISSION RULES:</div>
-    <ul className="list-disc pl-5 space-y-2 text-base">
-        <li>Follow the <span className="text-yellow-400 font-bold">YELLOW ARROW</span> to the target house.</li>
-        <li>Deliver mail to the <span className="text-yellow-400 font-bold">BLINKING MAILBOX</span>.</li>
-        <li><span className="text-green-400">Speed</span> is key! Chain deliveries for <span className="text-orange-400">COMBO</span> points.</li>
-        <li><strong>Stay on the Road!</strong> Lawns are off-limits.</li>
-        <li>Avoid <span className="text-red-400">CARS</span> and <span className="text-blue-400">PUDDLES</span> (-1 Heart).</li>
-        <li><strong>Game Over</strong> when Time hits 0:00 or Hearts are gone.</li>
-    </ul>
+  <div className="text-left space-y-6 text-[#cbdbfc] pb-4 px-1">
     
-    <div className="font-bold text-yellow-200 mt-4 sticky top-0 bg-[#222034] py-2 z-10 border-b border-white/10">POWERUPS (10s Duration):</div>
-    <div className="grid grid-cols-1 gap-2 text-sm">
-        <div className="flex items-center gap-2">
-            <span className="w-4 h-4 bg-[#e8e8e8] border border-black inline-block"></span> 
-            <span><strong className="text-white">Coffee</strong>: Speed Boost + Heal 1 Heart</span>
-        </div>
-        <div className="flex items-center gap-2">
-            <span className="w-4 h-4 bg-[#222] border border-gray-500 inline-block relative overflow-hidden flex justify-center items-center"><span className="w-1 h-1 bg-red-500 rounded-full"></span></span>
-            <span><strong className="text-white">Traffic Light</strong>: Freezes all Cars</span>
-        </div>
-        <div className="flex items-center gap-2">
-                <span className="w-4 h-4 bg-[#c19a6b] border border-[#5a3a29] inline-block"></span>
-            <span><strong className="text-white">Hourglass</strong>: Adds 10 Seconds</span>
+    {/* Mission Briefing */}
+    <div className="bg-black/30 p-4 rounded-lg border border-white/10 shadow-sm">
+      <h3 className="font-bold text-[#fbf236] text-2xl mb-3 flex items-center gap-2 border-b border-white/10 pb-2">
+        <span>📜</span> MISSION BRIEF
+      </h3>
+      <ul className="space-y-3 text-lg">
+        <li className="flex items-start gap-3">
+            <span className="text-yellow-400 mt-1">➤</span>
+            <span>Follow the <strong className="text-yellow-400 bg-yellow-900/30 px-1 rounded">YELLOW ARROW</strong> to the target house.</span>
+        </li>
+        <li className="flex items-start gap-3">
+            <span className="text-yellow-400 mt-1">➤</span>
+            <span>Deliver to the <strong className="text-yellow-400">BLINKING BOX</strong> to score points.</span>
+        </li>
+         <li className="flex items-start gap-3">
+            <span className="text-yellow-400 mt-1">➤</span>
+            <span>Chain deliveries quickly for <strong className="text-orange-400 animate-pulse">COMBO</strong> bonuses!</span>
+        </li>
+      </ul>
+    </div>
+
+    {/* Hazards */}
+    <div className="bg-red-900/10 p-4 rounded-lg border border-red-500/20">
+        <h3 className="font-bold text-red-400 text-xl mb-3 flex items-center gap-2 uppercase tracking-wide">
+            <span>⚠️</span> Hazards
+        </h3>
+        <ul className="grid grid-cols-1 md:grid-cols-2 gap-2 text-base">
+             <li className="flex items-center gap-2">
+                <span className="w-1.5 h-1.5 rounded-full bg-red-500 shrink-0"></span>
+                <span>Avoid <strong className="text-red-300">CARS</strong> (-1 Heart)</span>
+            </li>
+            <li className="flex items-center gap-2">
+                <span className="w-1.5 h-1.5 rounded-full bg-blue-400 shrink-0"></span>
+                <span>Avoid <strong className="text-blue-300">PUDDLES</strong> (-1 Heart)</span>
+            </li>
+             <li className="flex items-center gap-2 md:col-span-2">
+                <span className="w-1.5 h-1.5 rounded-full bg-red-500 shrink-0"></span>
+                <span>Stay on the <strong>ROAD</strong>! Lawns slow you down.</span>
+            </li>
+        </ul>
+    </div>
+    
+    {/* Powerups */}
+    <div>
+        <h3 className="font-bold text-green-400 text-xl mb-3 flex items-center gap-2 sticky top-0 bg-[#222034] py-2 z-10">
+            <span>⚡</span> POWERUPS (10s)
+        </h3>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            {/* Coffee Card */}
+            <div className="bg-white/5 p-3 rounded border border-white/10 flex items-center sm:flex-col sm:text-center gap-3 hover:bg-white/10 transition-colors">
+                 <div className="w-10 h-10 shrink-0 bg-white/10 rounded-full flex items-center justify-center border border-white/20">
+                    <div className="w-5 h-6 bg-[#e8e8e8] border border-black relative">
+                       <div className="absolute top-1 left-0 w-full h-2 bg-[#6f4e37]"></div>
+                       <div className="absolute top-2 -right-2 w-2 h-3 border-2 border-[#e8e8e8] rounded-r-md"></div>
+                    </div>
+                 </div>
+                 <div>
+                    <div className="font-bold text-white text-sm">COFFEE</div>
+                    <div className="text-xs text-gray-300 leading-tight">Speed Boost + Heal 1 Heart</div>
+                 </div>
+            </div>
+
+            {/* Traffic Light Card */}
+            <div className="bg-white/5 p-3 rounded border border-white/10 flex items-center sm:flex-col sm:text-center gap-3 hover:bg-white/10 transition-colors">
+                 <div className="w-10 h-10 shrink-0 bg-white/10 rounded-full flex items-center justify-center border border-white/20">
+                     <div className="w-3 h-7 bg-[#222] border border-gray-500 flex flex-col items-center justify-evenly py-[1px]">
+                        <div className="w-1.5 h-1.5 rounded-full bg-red-500 shadow-[0_0_2px_red]"></div>
+                        <div className="w-1.5 h-1.5 rounded-full bg-yellow-600 opacity-50"></div>
+                        <div className="w-1.5 h-1.5 rounded-full bg-green-600 opacity-50"></div>
+                     </div>
+                 </div>
+                 <div>
+                     <div className="font-bold text-white text-sm">JAMMER</div>
+                     <div className="text-xs text-gray-300 leading-tight">Freezes all traffic</div>
+                 </div>
+            </div>
+
+            {/* Time Card */}
+             <div className="bg-white/5 p-3 rounded border border-white/10 flex items-center sm:flex-col sm:text-center gap-3 hover:bg-white/10 transition-colors">
+                 <div className="w-10 h-10 shrink-0 bg-white/10 rounded-full flex items-center justify-center border border-white/20">
+                    <div className="w-6 h-6 rounded-full border-2 border-[#c19a6b] bg-[#fff] relative flex items-center justify-center">
+                         <div className="w-0.5 h-2 bg-black absolute bottom-1/2 left-1/2 -translate-x-1/2 origin-bottom rotate-45"></div>
+                         <div className="w-0.5 h-1.5 bg-black absolute bottom-1/2 left-1/2 -translate-x-1/2 origin-bottom -rotate-12"></div>
+                    </div>
+                 </div>
+                 <div>
+                     <div className="font-bold text-white text-sm">CLOCK</div>
+                     <div className="text-xs text-gray-300 leading-tight">Adds +10 Seconds</div>
+                 </div>
+            </div>
         </div>
     </div>
 
-    <div className="mt-4 text-center text-gray-400 text-sm">
-        Controls: WASD / Arrows to Move • SHIFT to Dash • SPACE to Pause
+    <div className="mt-6 p-3 bg-blue-900/20 rounded border border-blue-500/30 text-center text-gray-300 text-sm">
+        <span className="font-bold text-blue-300 block mb-1">CONTROLS</span>
+        WASD / Arrows to Move • SHIFT to Dash • SPACE to Pause
     </div>
   </div>
 );
