@@ -1,0 +1,5 @@
+{
+  "name": "Pixel Postman",
+  "description": "A 2D Pixel-Art, Arcade, Speed-Run Delivery Game where you deliver letters against the clock while avoiding cars and puddles.",
+  "requestFramePermissions": []
+}
