@@ -10,7 +10,8 @@ export enum EntityType {
   POWERUP = 'POWERUP',
   PARTICLE = 'PARTICLE',
   TREE = 'TREE',
-  STREET_LIGHT = 'STREET_LIGHT'
+  STREET_LIGHT = 'STREET_LIGHT',
+  TEXT_POPUP = 'TEXT_POPUP'
 }
 
 export enum TileType {
@@ -19,13 +20,15 @@ export enum TileType {
   HOUSE = 2,
   GARDEN = 3,
   DRIVEWAY = 4,
-  FOOTPATH = 5
+  FOOTPATH = 5,
+  WATER = 6
 }
 
 export enum PowerUpType {
-  COFFEE = 'COFFEE', // Speed
+  COFFEE = 'COFFEE', // Boost Charge
   TRAFFIC_LIGHT = 'TRAFFIC_LIGHT', // Freeze Traffic
-  CLOCK = 'CLOCK' // +Time
+  CLOCK = 'CLOCK', // +Time
+  RAINCOAT = 'RAINCOAT' // Puddle Immunity
 }
 
 export enum CarState {
@@ -43,6 +46,14 @@ export interface Entity {
   color?: string;
 }
 
+export interface TextPopup extends Entity {
+  text: string;
+  life: number;
+  velocity: Vector2;
+  color: string;
+  fontSize: number;
+}
+
 export interface Puddle extends Entity {
   points: Vector2[];
 }
@@ -50,13 +61,15 @@ export interface Puddle extends Entity {
 export interface Player extends Entity {
   velocity: Vector2;
   speed: number;
-  isDashing: boolean;
-  dashCooldown: number;
+  isBoosting: boolean;
+  boostTimer: number;
+  boostCharge: number;
+  boostUnlocked: boolean;
   frame: number;
   direction: 'left' | 'right' | 'up' | 'down';
   stunned: number;
   buffs: {
-    speedBoost: number; // time remaining
+    puddleImmunity: number; // time remaining
   };
   health: number;
   maxHealth: number;
@@ -103,12 +116,13 @@ export interface GameState {
   isPlaying: boolean;
   isGameOver: boolean;
   score: number;
-  combo: number;
   timer: number;
   deliveries: number;
   lastDeliveryTime: number;
   trafficPauseTimer: number;
   map: TileType[][];
+  vRoads: number[]; // X coordinates of vertical roads
+  hRoads: number[]; // Y coordinates of horizontal roads
   entities: {
     player: Player;
     houses: House[];
@@ -117,6 +131,7 @@ export interface GameState {
     powerups: PowerUp[];
     particles: Particle[];
     staticObjects: Entity[];
+    textPopups: TextPopup[];
   };
   camera: Vector2;
 }

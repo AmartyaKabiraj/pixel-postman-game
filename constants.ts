@@ -4,7 +4,7 @@ import { PowerUpType } from "./types";
 
 // Display Scaling
 export const TILE_SIZE = 32; // Visual tile size
-export const MAP_WIDTH = 40; // in tiles
+export const MAP_WIDTH = 50; // in tiles
 export const MAP_HEIGHT = 30; // in tiles
 
 // Road Generation Layout
@@ -25,6 +25,9 @@ export const COLORS = {
   HOUSE_ROOF_LIGHT: '#d68e6e',
   DRIVEWAY: '#999999', // Concrete
   GARDEN: '#4d8f3e', // Darker green vegetation
+  WATER: '#4fa4b8',
+  WATER_RIPPLE: '#a8e6f0',
+  POOL_EDGE: '#d0d0d0',
   PLAYER: '#4d9be6',
   PLAYER_ACCENT: '#2a5d8f',
   CAR: '#e64d4d', // Red Sports Car
@@ -54,15 +57,16 @@ export const POWERUP_COLORS: Record<PowerUpType, string> = {
   [PowerUpType.COFFEE]: '#6f4e37',
   [PowerUpType.TRAFFIC_LIGHT]: '#333333',
   [PowerUpType.CLOCK]: '#ffffff',
+  [PowerUpType.RAINCOAT]: '#f4d03f',
 };
 
 // Gameplay
 export const INITIAL_TIME = 150;
 export const PLAYER_SPEED = 4;
-export const DASH_SPEED = 10;
-export const DASH_DURATION = 10; // frames
+export const BOOST_SPEED = 8;
 export const CAR_SPEED = 3.5;
 export const COMBO_TIMEOUT = 3000; // ms
+export const MAX_BOOST_CHARGE = 4;
 
 export const MAP_PIXEL_WIDTH = MAP_WIDTH * TILE_SIZE;
 export const MAP_PIXEL_HEIGHT = MAP_HEIGHT * TILE_SIZE;

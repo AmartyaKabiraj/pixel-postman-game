@@ -1,18 +1,18 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { 
-  GameState, EntityType, Player, House, Vector2, Car, PowerUpType, Particle, Entity, TileType, CarState, Puddle
+  GameState, EntityType, Player, House, Vector2, Car, PowerUpType, Particle, Entity, TileType, CarState, Puddle, TextPopup
 } from '../types';
 import { 
   TILE_SIZE, MAP_WIDTH, MAP_HEIGHT, COLORS, MAP_PIXEL_WIDTH, MAP_PIXEL_HEIGHT,
-  INITIAL_TIME, PLAYER_SPEED, DASH_SPEED, CAR_SPEED, POWERUP_COLORS,
-  ROAD_INTERVAL_X, ROAD_INTERVAL_Y, ROAD_WIDTH_TILES, WALL_COLORS
+  INITIAL_TIME, PLAYER_SPEED, BOOST_SPEED, CAR_SPEED, POWERUP_COLORS,
+  WALL_COLORS, MAX_BOOST_CHARGE
 } from '../constants';
 import { audio } from '../audio';
 
 interface GameLoopProps {
   input: { x: number; y: number; dash: boolean };
   isPaused: boolean;
-  onScoreUpdate: (score: number, combo: number, time: number, health: number) => void;
+  onScoreUpdate: (score: number, time: number, health: number, trafficTimer: number, puddleTimer: number, boostCharge: number, boostUnlocked: boolean) => void;
   onGameOver: (finalScore: number, screenshot: string | null, reason: string) => void;
 }
 
@@ -24,6 +24,7 @@ export const GameLoop: React.FC<GameLoopProps> = ({ input, isPaused, onScoreUpda
   const gameOverReasonRef = useRef<string>('');
   
   const inputRef = useRef(input);
+  const prevDashRef = useRef(false); // Track previous frame input for trigger logic
   const lastMoveSoundTime = useRef<number>(0);
 
   useEffect(() => {
@@ -34,19 +35,20 @@ export const GameLoop: React.FC<GameLoopProps> = ({ input, isPaused, onScoreUpda
     isPlaying: false,
     isGameOver: false,
     score: 0,
-    combo: 0,
     timer: INITIAL_TIME,
     deliveries: 0,
     lastDeliveryTime: 0,
     trafficPauseTimer: 0,
     map: [],
+    vRoads: [],
+    hRoads: [],
     entities: {
       player: {
         id: 'p1', type: EntityType.PLAYER,
-        pos: { x: 0, y: 0 }, size: { x: 12, y: 24 }, // Bicycle size
+        pos: { x: 0, y: 0 }, size: { x: 14, y: 14 }, // Postman size
         velocity: { x: 0, y: 0 }, speed: PLAYER_SPEED,
-        isDashing: false, dashCooldown: 0, frame: 0, direction: 'right', stunned: 0,
-        buffs: { speedBoost: 0 },
+        isBoosting: false, boostTimer: 0, boostCharge: 0, boostUnlocked: false, frame: 0, direction: 'right', stunned: 0,
+        buffs: { puddleImmunity: 0 },
         health: 3, maxHealth: 3, invulnerabilityTimer: 0
       },
       houses: [],
@@ -54,7 +56,8 @@ export const GameLoop: React.FC<GameLoopProps> = ({ input, isPaused, onScoreUpda
       puddles: [],
       powerups: [],
       particles: [],
-      staticObjects: []
+      staticObjects: [],
+      textPopups: []
     },
     camera: { x: 0, y: 0 }
   });
@@ -97,31 +100,51 @@ export const GameLoop: React.FC<GameLoopProps> = ({ input, isPaused, onScoreUpda
   };
 
   // Determine allowed flow direction based on grid (Right Hand Traffic)
-  // Even X = DOWN, Odd X = UP
-  // Even Y = LEFT, Odd Y = RIGHT
-  const getTrafficFlow = (tx: number, ty: number) => {
+  // Even index Road = Down/Left, Odd index Road = Up/Right (Alternating)
+  const getTrafficFlow = (tx: number, ty: number, vRoads: number[], hRoads: number[]) => {
     const flows: {x:number, y:number, d:'up'|'down'|'left'|'right'}[] = [];
     
-    // Vertical Roads
-    if (tx % 2 === 0) flows.push({ x: 0, y: 1, d: 'down' });
-    else flows.push({ x: 0, y: -1, d: 'up' });
+    // Check Vertical Roads (Roads are 2 tiles wide, so tx or tx-1 could be the start)
+    // Find index of road in vRoads
+    const vIndex = vRoads.findIndex(v => tx === v || tx === v + 1);
+    
+    if (vIndex !== -1) {
+        if (vIndex % 2 === 0) flows.push({ x: 0, y: 1, d: 'down' });
+        else flows.push({ x: 0, y: -1, d: 'up' });
+    }
 
-    // Horizontal Roads
-    if (ty % 2 === 0) flows.push({ x: -1, y: 0, d: 'left' });
-    else flows.push({ x: 1, y: 0, d: 'right' });
+    // Check Horizontal Roads
+    const hIndex = hRoads.findIndex(h => ty === h || ty === h + 1);
+    
+    if (hIndex !== -1) {
+        if (hIndex % 2 === 0) flows.push({ x: -1, y: 0, d: 'left' });
+        else flows.push({ x: 1, y: 0, d: 'right' });
+    }
 
     return flows;
   };
 
   // Find a random road tile
-  const getRandomRoadPosition = (map: TileType[][], entitySize: Vector2) : Vector2 => {
+  const getRandomRoadPosition = (map: TileType[][], entitySize: Vector2, avoidEntities: Entity[] = []) : Vector2 => {
       let attempts = 0;
       while(attempts < 1000) {
           const tx = Math.floor(Math.random() * MAP_WIDTH);
           const ty = Math.floor(Math.random() * MAP_HEIGHT);
           if (map[ty][tx] === TileType.ROAD) {
              const pos = { x: tx * TILE_SIZE + 4, y: ty * TILE_SIZE + 4 }; // Offset slightly
-             if (isWalkable(pos, entitySize, map)) return pos;
+             if (isWalkable(pos, entitySize, map)) {
+                 let collision = false;
+                 if (avoidEntities.length > 0) {
+                     const rect = { pos, size: entitySize };
+                     for (const ent of avoidEntities) {
+                         if (checkCollision(rect, ent)) {
+                             collision = true;
+                             break;
+                         }
+                     }
+                 }
+                 if (!collision) return pos;
+             }
           }
           attempts++;
       }
@@ -133,44 +156,101 @@ export const GameLoop: React.FC<GameLoopProps> = ({ input, isPaused, onScoreUpda
     const map: TileType[][] = Array(MAP_HEIGHT).fill(null).map(() => Array(MAP_WIDTH).fill(TileType.GRASS));
     const houses: House[] = [];
     const staticObjects: Entity[] = [];
+    const puddles: Puddle[] = [];
 
-    // Draw Roads
-    for(let y = 0; y < MAP_HEIGHT; y++) {
-        for(let x = 0; x < MAP_WIDTH; x++) {
-            // Margin 2 tiles for Grass borders
-            if (x < 2 || x >= MAP_WIDTH - 2 || y < 2 || y >= MAP_HEIGHT - 2) {
-                map[y][x] = TileType.GRASS;
-                continue;
-            }
+    // --- IRREGULAR ROAD GENERATION ---
+    const vRoads: number[] = [];
+    const hRoads: number[] = [];
+    
+    // Perimeters
+    vRoads.push(2);
+    vRoads.push(MAP_WIDTH - 4);
+    hRoads.push(2);
+    hRoads.push(MAP_HEIGHT - 4);
 
-            // Grid
-            // Offset Y by 3 so first road is at y=3, leaving exactly 3 tiles above for a house
-            // Use safe modulo for negative numbers to prevent top road from being 3 wide (at y=2)
-            const isVertRoad = ((x - 2) % ROAD_INTERVAL_X + ROAD_INTERVAL_X) % ROAD_INTERVAL_X < ROAD_WIDTH_TILES;
-            const isHorzRoad = ((y - 3) % ROAD_INTERVAL_Y + ROAD_INTERVAL_Y) % ROAD_INTERVAL_Y < ROAD_WIDTH_TILES;
+    // Generate random intervals for internal roads
+    const addLines = (arr: number[], max: number, minGap: number) => {
+        let last = arr[0];
+        while(true) {
+            // Random gap between minGap and minGap + variance
+            const gap = minGap + Math.floor(Math.random() * 5); 
+            const next = last + gap;
+            if (next >= max - minGap) break; // Too close to end
+            arr.push(next);
+            last = next;
+        }
+        arr.sort((a,b) => a-b);
+    };
 
-            if (isVertRoad || isHorzRoad) {
-                map[y][x] = TileType.ROAD;
+    addLines(vRoads, MAP_WIDTH - 4, 10); 
+    addLines(hRoads, MAP_HEIGHT - 4, 10);
+
+    // Rasterize Roads
+    vRoads.forEach(x => {
+        for(let y=0; y<MAP_HEIGHT; y++) {
+             map[y][x] = TileType.ROAD;
+             map[y][x+1] = TileType.ROAD;
+        }
+    });
+    hRoads.forEach(y => {
+        for(let x=0; x<MAP_WIDTH; x++) {
+             map[y][x] = TileType.ROAD;
+             map[y+1][x] = TileType.ROAD;
+        }
+    });
+
+    // --- IDENTIFY PARK ZONE ---
+    let parkBlock = { x: 0, y: 0, w: 0, h: 0 };
+    const blocks: {x:number, y:number, w:number, h:number}[] = [];
+    
+    for(let i=0; i<vRoads.length-1; i++) {
+        for(let j=0; j<hRoads.length-1; j++) {
+            const bx = vRoads[i] + 2;
+            const by = hRoads[j] + 2;
+            const bw = vRoads[i+1] - vRoads[i] - 2;
+            const bh = hRoads[j+1] - hRoads[j] - 2;
+            
+            if (bw >= 4 && bh >= 4) {
+                blocks.push({ x: bx, y: by, w: bw, h: bh });
             }
         }
     }
+    
+    if (blocks.length > 0) {
+        blocks.sort((a, b) => {
+            const centerA = Math.abs((a.x + a.w/2) - MAP_WIDTH/2) + Math.abs((a.y + a.h/2) - MAP_HEIGHT/2);
+            const centerB = Math.abs((b.x + b.w/2) - MAP_WIDTH/2) + Math.abs((b.y + b.h/2) - MAP_HEIGHT/2);
+            const sizeA = a.w * a.h;
+            const sizeB = b.w * b.h;
+            return (sizeB - centerB*2) - (sizeA - centerA*2);
+        });
+        parkBlock = blocks[0];
+    }
 
-    // Place Houses
+    // --- PLACE HOUSES ---
     const roofColors = [COLORS.HOUSE_ROOF, COLORS.HOUSE_ROOF_DARK, COLORS.HOUSE_ROOF_LIGHT, '#8a6f50', '#a35a40', '#50668a'];
     
-    for(let y = 0; y < MAP_HEIGHT - 2; y++) {
-        for(let x = 0; x < MAP_WIDTH - 2; x++) {
+    for(let y = 0; y < MAP_HEIGHT - 3; y++) {
+        for(let x = 0; x < MAP_WIDTH - 4; x++) {
+            
+            // SKIP PARK
+            if (x >= parkBlock.x - 1 && x < parkBlock.x + parkBlock.w + 1 &&
+                y >= parkBlock.y - 1 && y < parkBlock.y + parkBlock.h + 1) {
+                continue;
+            }
+
             if (map[y][x] === TileType.GRASS) {
                 const wTiles = 4;
-                const hTiles = 3; // Typically deeper for yards
+                const hTiles = 3; 
                 
                 let facing: 'up'|'down'|'left'|'right' | null = null;
                 // Check Above
                 if (y > 0 && map[y-1][x] === TileType.ROAD) facing = 'up';
-                // Check Below (need to look ahead)
+                // Check Below 
                 else if (y + hTiles < MAP_HEIGHT && map[y+hTiles][x] === TileType.ROAD) facing = 'down';
 
-                if (facing && Math.random() > 0.4) {
+                // Increased density (0.4 -> 0.1 skip chance)
+                if (facing && Math.random() > 0.1) {
                     let clear = true;
 
                     if (y + hTiles >= MAP_HEIGHT || x + wTiles >= MAP_WIDTH) {
@@ -193,25 +273,14 @@ export const GameLoop: React.FC<GameLoopProps> = ({ input, isPaused, onScoreUpda
                         let doorPos = { x: pos.x + w/2, y: pos.y + (facing==='up'?0:h) }; 
                         let cutoutCorner: 'tl'|'tr'|'bl'|'br' | undefined = undefined;
 
-                        // Configuration for American Style Houses with Driveways
-                        // Driveway is consistently on the RIGHT side of the lot
                         if (facing === 'down') {
-                            // House at Top, Driveway Right, Road Bottom
                             drivewayPos = { x: pos.x + w - TILE_SIZE, y: pos.y + h - TILE_SIZE };
                             doorPos = { x: pos.x + TILE_SIZE * 1.5, y: pos.y + h - 8 };
-                            
-                            if (shapeType === 'L') {
-                                cutoutCorner = 'bl';
-                            }
+                            if (shapeType === 'L') cutoutCorner = 'bl';
                         } else {
-                            // Facing UP (Road is above)
-                            // House at Bottom, Driveway Right, Road Top
                             drivewayPos = { x: pos.x + w - TILE_SIZE, y: pos.y };
                             doorPos = { x: pos.x + TILE_SIZE * 1.5, y: pos.y + 8 };
-
-                             if (shapeType === 'L') {
-                                cutoutCorner = 'tl';
-                            }
+                             if (shapeType === 'L') cutoutCorner = 'tl';
                         }
 
                         // Apply to Map
@@ -220,10 +289,7 @@ export const GameLoop: React.FC<GameLoopProps> = ({ input, isPaused, onScoreUpda
                                 const tileX = x + dx;
                                 const tileY = y + dy;
                                 
-                                // Default to garden
                                 map[tileY][tileX] = TileType.GARDEN;
-
-                                // House Logic
                                 let isHousePart = false;
                                 
                                 if (facing === 'down' && dy < 2) isHousePart = true;
@@ -231,29 +297,17 @@ export const GameLoop: React.FC<GameLoopProps> = ({ input, isPaused, onScoreUpda
 
                                 if (isHousePart && shapeType === 'L') {
                                     const hDy = facing === 'up' ? dy - 1 : dy;
-                                    
                                     if (cutoutCorner === 'tl' && dx < 2 && hDy < 1) isHousePart = false;
                                     if (cutoutCorner === 'tr' && dx >= 2 && hDy < 1) isHousePart = false;
                                     if (cutoutCorner === 'bl' && dx < 2 && hDy >= 1) isHousePart = false;
                                     if (cutoutCorner === 'br' && dx >= 2 && hDy >= 1) isHousePart = false;
                                 }
 
-                                if (isHousePart) {
-                                    map[tileY][tileX] = TileType.HOUSE;
-                                }
+                                if (isHousePart) map[tileY][tileX] = TileType.HOUSE;
                             }
                         }
 
-                        // Driveway Logic
-                        if (facing === 'down') {
-                             for(let dy=0; dy<hTiles; dy++) {
-                                 map[y+dy][x+wTiles-1] = TileType.DRIVEWAY;
-                             }
-                        } else {
-                             for(let dy=0; dy<hTiles; dy++) {
-                                 map[y+dy][x+wTiles-1] = TileType.DRIVEWAY;
-                             }
-                        }
+                        for(let dy=0; dy<hTiles; dy++) map[y+dy][x+wTiles-1] = TileType.DRIVEWAY;
 
                         houses.push({
                            id: `h_${x}_${y}`,
@@ -269,7 +323,7 @@ export const GameLoop: React.FC<GameLoopProps> = ({ input, isPaused, onScoreUpda
                            drivewaySize: { x: TILE_SIZE, y: TILE_SIZE },
                            roofColor: roofColors[Math.floor(Math.random() * roofColors.length)],
                            wallColor: WALL_COLORS[Math.floor(Math.random() * WALL_COLORS.length)],
-                           style: Math.floor(Math.random() * 4), // 0-3
+                           style: Math.floor(Math.random() * 4), 
                            shape: shapeType,
                            cutoutCorner: cutoutCorner
                        });
@@ -279,10 +333,78 @@ export const GameLoop: React.FC<GameLoopProps> = ({ input, isPaused, onScoreUpda
         }
     }
     
-    // Generate Footpaths and Static Objects
+    // --- FILL REMAINING SPACE (GARDENS, POOLS, BACKYARDS) ---
+    // Iterate through the urban area and convert all internal GRASS to GARDEN/BACKYARD content
+    // excluding the Park.
+    const cityMinX = vRoads[0];
+    const cityMaxX = vRoads[vRoads.length-1] + 1;
+    const cityMinY = hRoads[0];
+    const cityMaxY = hRoads[hRoads.length-1] + 1;
+
+    for (let y = cityMinY; y <= cityMaxY; y++) {
+        for (let x = cityMinX; x <= cityMaxX; x++) {
+            // Skip park
+            if (x >= parkBlock.x && x < parkBlock.x + parkBlock.w &&
+                y >= parkBlock.y && y < parkBlock.y + parkBlock.h) {
+                continue;
+            }
+
+            if (map[y][x] === TileType.GRASS) {
+                // Determine if it's "inside" a block (surrounded by things other than road on immediate sides or near houses)
+                // For simplicity, everything inside the road grid that isn't road is garden/property
+                map[y][x] = TileType.GARDEN;
+            }
+        }
+    }
+
+    // --- DECORATE GARDENS (POOLS, TREES) ---
+    for (let y = cityMinY; y <= cityMaxY; y++) {
+        for (let x = cityMinX; x <= cityMaxX; x++) {
+             if (map[y][x] === TileType.GARDEN) {
+                 // Try to place a Pool (3x2)
+                 if (Math.random() < 0.05) { // 5% chance per tile start
+                     let canPool = true;
+                     const pw = 3, ph = 2;
+                     if (x + pw > cityMaxX || y + ph > cityMaxY) canPool = false;
+                     else {
+                         for(let dy=0; dy<ph; dy++) {
+                             for(let dx=0; dx<pw; dx++) {
+                                 if (map[y+dy][x+dx] !== TileType.GARDEN) canPool = false;
+                             }
+                         }
+                     }
+                     
+                     if (canPool) {
+                         for(let dy=0; dy<ph; dy++) {
+                             for(let dx=0; dx<pw; dx++) {
+                                 map[y+dy][x+dx] = TileType.WATER;
+                             }
+                         }
+                     }
+                 }
+                 // Try to place Trees
+                 else if (Math.random() < 0.15) {
+                     const centerX = x * TILE_SIZE + TILE_SIZE / 2;
+                     const centerY = y * TILE_SIZE + TILE_SIZE / 2;
+                     staticObjects.push({
+                        id: `tree_backyard_${x}_${y}`,
+                        type: EntityType.TREE,
+                        pos: { x: centerX - 10, y: centerY - 10 },
+                        size: { x: 20, y: 20 },
+                     });
+                 }
+                 // Try to place Patio (Footpath patch)
+                 else if (Math.random() < 0.05) {
+                     map[y][x] = TileType.FOOTPATH;
+                 }
+             }
+        }
+    }
+
+    // --- GENERATE FOOTPATHS & DECORATION (Roadside) ---
     for (let y = 0; y < MAP_HEIGHT; y++) {
         for (let x = 0; x < MAP_WIDTH; x++) {
-            if (map[y][x] === TileType.GRASS || map[y][x] === TileType.GARDEN) {
+            if (map[y][x] === TileType.GARDEN || map[y][x] === TileType.GRASS) {
                 // If adjacent to road, make footpath
                 let hasRoad = false;
                 const neighbors = [[0,1], [0,-1], [1,0], [-1,0]];
@@ -295,12 +417,12 @@ export const GameLoop: React.FC<GameLoopProps> = ({ input, isPaused, onScoreUpda
                     }
                 }
 
-                if (hasRoad && map[y][x] !== TileType.GARDEN) { 
+                if (hasRoad) { 
                     map[y][x] = TileType.FOOTPATH;
-                    
                     const centerX = x * TILE_SIZE + TILE_SIZE / 2;
                     const centerY = y * TILE_SIZE + TILE_SIZE / 2;
                     
+                    // Street Trees
                     if (Math.random() > 0.8) {
                         staticObjects.push({
                             id: `tree_${x}_${y}`,
@@ -314,11 +436,59 @@ export const GameLoop: React.FC<GameLoopProps> = ({ input, isPaused, onScoreUpda
         }
     }
 
+    // --- DECORATE PARK ---
+    if (parkBlock.w > 0) {
+        // Add a big pond in center of park?
+        const pondW = Math.min(parkBlock.w - 2, 4);
+        const pondH = Math.min(parkBlock.h - 2, 3);
+        const pondX = parkBlock.x + Math.floor((parkBlock.w - pondW)/2);
+        const pondY = parkBlock.y + Math.floor((parkBlock.h - pondH)/2);
+        
+        // Puddle logic for pond
+        const points: Vector2[] = [];
+        const wPx = pondW * TILE_SIZE;
+        const hPx = pondH * TILE_SIZE;
+        const segments = 10;
+        const angleStep = (Math.PI * 2) / segments;
+        for(let s=0; s<segments; s++) {
+             const angle = s * angleStep;
+             const rX = (wPx/2) * (0.8 + Math.random() * 0.2); 
+             const rY = (hPx/2) * (0.8 + Math.random() * 0.2);
+             points.push({ x: Math.cos(angle) * rX, y: Math.sin(angle) * rY });
+        }
+
+        puddles.push({
+            id: 'park_pond', type: EntityType.PUDDLE,
+            pos: { x: pondX * TILE_SIZE, y: pondY * TILE_SIZE },
+            size: { x: wPx, y: hPx },
+            points: points
+        });
+
+        for(let y=parkBlock.y; y<parkBlock.y+parkBlock.h; y++) {
+            for(let x=parkBlock.x; x<parkBlock.x+parkBlock.w; x++) {
+                if (map[y][x] !== TileType.FOOTPATH) map[y][x] = TileType.GARDEN;
+
+                // Don't place trees in pond
+                if (x >= pondX && x < pondX + pondW && y >= pondY && y < pondY + pondH) continue;
+
+                if (Math.random() > 0.6) {
+                    staticObjects.push({
+                        id: `tree_park_${x}_${y}`,
+                        type: EntityType.TREE,
+                        pos: { x: x*TILE_SIZE + 6, y: y*TILE_SIZE + 6 },
+                        size: { x: 20, y: 20 }
+                    });
+                }
+            }
+        }
+    }
+
     if (houses.length > 0) {
       houses[Math.floor(Math.random() * houses.length)].isTarget = true;
     }
 
     let startPos = { x: 64, y: 64 };
+    // Start on a valid road
     for(let y=0; y<MAP_HEIGHT; y++) {
         for(let x=0; x<MAP_WIDTH; x++) {
             if (map[y][x] === TileType.ROAD) {
@@ -328,34 +498,24 @@ export const GameLoop: React.FC<GameLoopProps> = ({ input, isPaused, onScoreUpda
         }
     }
 
-    const puddles: Puddle[] = [];
-    // Reduced puddle size to be smaller than half road (Road is 64px, Half is 32px)
-    // Max width 28px
-    for(let i=0; i<12; i++) {
-        const w = 15 + Math.random() * 13; // 15 to 28
-        const h = 12 + Math.random() * 10; // 12 to 22
-        const pos = getRandomRoadPosition(map, {x: w, y: h});
+    // --- RANDOM PUDDLES ---
+    for(let i=0; i<10; i++) {
+        const w = 15 + Math.random() * 13; 
+        const h = 12 + Math.random() * 10;
+        const pos = getRandomRoadPosition(map, {x: w, y: h}, puddles);
         
         const points: Vector2[] = [];
         const segments = 8 + Math.floor(Math.random() * 4); 
         const angleStep = (Math.PI * 2) / segments;
-        
         for(let s=0; s<segments; s++) {
              const angle = s * angleStep;
              const rX = (w/2) * (0.6 + Math.random() * 0.4); 
              const rY = (h/2) * (0.6 + Math.random() * 0.4);
-             
-             points.push({
-                x: Math.cos(angle) * rX,
-                y: Math.sin(angle) * rY
-             });
+             points.push({ x: Math.cos(angle) * rX, y: Math.sin(angle) * rY });
         }
-
         puddles.push({
             id: `pud_${i}`, type: EntityType.PUDDLE,
-            pos: pos,
-            size: { x: w, y: h },
-            points: points
+            pos: pos, size: { x: w, y: h }, points: points
         });
     }
 
@@ -370,11 +530,11 @@ export const GameLoop: React.FC<GameLoopProps> = ({ input, isPaused, onScoreUpda
                 id: `car_${i}`,
                 type: EntityType.CAR,
                 pos: { x: carX, y: carY },
-                size: { x: 22, y: 12 }, // Sedan aspect ratio (longer than wide)
+                size: { x: 22, y: 12 },
                 velocity: { x: 0, y: 0 },
                 speed: CAR_SPEED,
                 frozenTimer: 0,
-                direction: h.facing === 'up' ? 'down' : 'up', // Parked facing out usually
+                direction: h.facing === 'up' ? 'down' : 'up',
                 state: CarState.PARKED,
                 homePos: { x: carX, y: carY }
             });
@@ -385,25 +545,40 @@ export const GameLoop: React.FC<GameLoopProps> = ({ input, isPaused, onScoreUpda
       isPlaying: true,
       isGameOver: false,
       score: 0,
-      combo: 0,
       timer: INITIAL_TIME,
       deliveries: 0,
       lastDeliveryTime: performance.now(),
       trafficPauseTimer: 0,
       map,
+      vRoads,
+      hRoads,
       entities: {
-        player: { ...state.current.entities.player, pos: startPos, health: 3, maxHealth: 3, invulnerabilityTimer: 0 },
+        player: { 
+          ...state.current.entities.player, 
+          pos: startPos, 
+          size: { x: 14, y: 14 },
+          health: 3, 
+          maxHealth: 3, 
+          invulnerabilityTimer: 0, 
+          buffs: { puddleImmunity: 0 },
+          boostCharge: 0,
+          boostUnlocked: false,
+          boostTimer: 0,
+          isBoosting: false
+        },
         houses,
         cars,
         puddles,
         powerups: [],
         particles: [],
-        staticObjects
+        staticObjects,
+        textPopups: []
       },
       camera: { x: 0, y: 0 }
     };
     gameOverSentRef.current = false;
     gameOverReasonRef.current = '';
+    prevDashRef.current = false;
   }, []);
 
   const activateCar = () => {
@@ -420,9 +595,26 @@ export const GameLoop: React.FC<GameLoopProps> = ({ input, isPaused, onScoreUpda
         const tileX = Math.floor(car.pos.x / TILE_SIZE);
         const tileY = Math.floor(car.pos.y / TILE_SIZE);
         
-        if (tileY+1 < MAP_HEIGHT && (s.map[tileY+1][tileX] === TileType.ROAD || s.map[tileY+2]?.[tileX] === TileType.ROAD)) car.direction = 'down';
-        else if (tileY-1 >= 0 && (s.map[tileY-1][tileX] === TileType.ROAD || s.map[tileY-2]?.[tileX] === TileType.ROAD)) car.direction = 'up';
+        // Robust check for any adjacent road
+        if (tileY+1 < MAP_HEIGHT && s.map[tileY+1][tileX] === TileType.ROAD) car.direction = 'down';
+        else if (tileY-1 >= 0 && s.map[tileY-1][tileX] === TileType.ROAD) car.direction = 'up';
+        else if (tileX+1 < MAP_WIDTH && s.map[tileY][tileX+1] === TileType.ROAD) car.direction = 'right';
+        else if (tileX-1 >= 0 && s.map[tileY][tileX-1] === TileType.ROAD) car.direction = 'left';
     }
+  };
+
+  const spawnTextPopup = (text: string, pos: Vector2, color: string) => {
+    state.current.entities.textPopups.push({
+        id: `txt_${Date.now()}_${Math.random()}`,
+        type: EntityType.TEXT_POPUP,
+        pos: { x: pos.x, y: pos.y - 10 },
+        size: { x: 0, y: 0 },
+        text,
+        life: 1.0,
+        velocity: { x: 0, y: -20 },
+        color,
+        fontSize: 16
+    });
   };
 
   const update = (deltaTime: number) => {
@@ -441,11 +633,11 @@ export const GameLoop: React.FC<GameLoopProps> = ({ input, isPaused, onScoreUpda
         s.trafficPauseTimer -= deltaTime;
     }
 
-    let spawnChance = 0.003; 
+    let spawnChance = 0.01; // Increased spawn rate
     
     if (s.timer <= 60) {
         const intensity = 1 - (Math.max(0, s.timer) / 60);
-        spawnChance = 0.003 + (intensity * 0.04);
+        spawnChance = 0.01 + (intensity * 0.04);
     }
 
     if (Math.random() < spawnChance) {
@@ -453,9 +645,9 @@ export const GameLoop: React.FC<GameLoopProps> = ({ input, isPaused, onScoreUpda
     }
     
     if (Math.random() < 0.005 && s.entities.powerups.length < 5) {
-         const types = [PowerUpType.COFFEE, PowerUpType.TRAFFIC_LIGHT, PowerUpType.CLOCK];
+         const types = [PowerUpType.COFFEE, PowerUpType.TRAFFIC_LIGHT, PowerUpType.CLOCK, PowerUpType.RAINCOAT];
          const kind = types[Math.floor(Math.random() * types.length)];
-         const pos = getRandomRoadPosition(s.map, {x:16, y:16});
+         const pos = getRandomRoadPosition(s.map, {x:16, y:16}, s.entities.puddles);
          const life = 10.0; 
          
          s.entities.powerups.push({
@@ -477,8 +669,7 @@ export const GameLoop: React.FC<GameLoopProps> = ({ input, isPaused, onScoreUpda
         p.velocity = { x: 0, y: 0 };
     } else {
         let currentSpeed = p.speed;
-        if (p.isDashing) currentSpeed = DASH_SPEED;
-        else if (p.buffs.speedBoost > 0) currentSpeed = PLAYER_SPEED * 1.5;
+        if (p.isBoosting) currentSpeed = BOOST_SPEED;
 
         const desiredX = currentInput.x * currentSpeed;
         const desiredY = currentInput.y * currentSpeed;
@@ -494,9 +685,15 @@ export const GameLoop: React.FC<GameLoopProps> = ({ input, isPaused, onScoreUpda
         if (Math.abs(currentInput.x) > 0.1) p.direction = currentInput.x > 0 ? 'right' : 'left';
         if (Math.abs(currentInput.y) > 0.1) p.direction = currentInput.y > 0 ? 'down' : 'up';
 
-        if (currentInput.dash && p.dashCooldown <= 0) {
-            p.isDashing = true;
-            p.dashCooldown = 1.0; 
+        // Boost Logic
+        const isDashPressed = currentInput.dash;
+        const isDashTriggered = isDashPressed && !prevDashRef.current;
+        prevDashRef.current = isDashPressed;
+
+        if (isDashTriggered && p.boostCharge >= 1 && !p.isBoosting) {
+            p.boostCharge -= 1;
+            p.isBoosting = true;
+            p.boostTimer = 0.5; // Short burst duration
             audio.playDash(); // SFX
             for(let i=0; i<5; i++) {
                 s.entities.particles.push({
@@ -507,9 +704,10 @@ export const GameLoop: React.FC<GameLoopProps> = ({ input, isPaused, onScoreUpda
                 });
             }
         }
-        if (p.dashCooldown > 0) p.dashCooldown -= deltaTime;
-        if (p.isDashing) {
-             if (p.dashCooldown < 0.8) p.isDashing = false; 
+
+        if (p.isBoosting) {
+             p.boostTimer -= deltaTime;
+             if (p.boostTimer <= 0) p.isBoosting = false;
         }
 
         const checkMove = (nextPos: Vector2) => {
@@ -532,11 +730,16 @@ export const GameLoop: React.FC<GameLoopProps> = ({ input, isPaused, onScoreUpda
             if (checkCollision(p, pud as Entity)) inPuddle = true;
         });
         
-        if (inPuddle && !p.isDashing) {
+        // Puddle immunity check
+        if (inPuddle && !p.isBoosting && p.buffs.puddleImmunity <= 0) {
             if (p.invulnerabilityTimer <= 0) {
                 p.health -= 1;
                 p.invulnerabilityTimer = 2.0; 
                 audio.playSplash(); // SFX
+                
+                const texts = ["SPLASH!", "WET SOCKS!", "SLIPPERY!"];
+                spawnTextPopup(texts[Math.floor(Math.random()*texts.length)], p.pos, '#639bff');
+
                 if (p.health <= 0) {
                     s.isGameOver = true;
                     gameOverReasonRef.current = 'HEALTH';
@@ -550,18 +753,19 @@ export const GameLoop: React.FC<GameLoopProps> = ({ input, isPaused, onScoreUpda
         p.invulnerabilityTimer -= deltaTime;
     }
 
-    if (p.buffs.speedBoost > 0) p.buffs.speedBoost -= deltaTime;
+    if (p.buffs.puddleImmunity > 0) p.buffs.puddleImmunity -= deltaTime;
 
     // --- Delivery Logic ---
     const targetHouse = s.entities.houses.find(h => h.isTarget);
     if (targetHouse) {
         const dist = getDistance(p.pos, targetHouse.doorPos);
         if (dist < 45) {
-            s.score += 1 + (s.combo > 5 ? 1 : 0);
-            s.combo++;
+            s.score += 1;
             s.deliveries++;
             audio.playDelivery(); // SFX
             
+            spawnTextPopup("DELIVERED!", targetHouse.doorPos, '#fbf236');
+
             const timeSinceLast = performance.now() / 1000 - s.lastDeliveryTime;
             let bonusTime = 2;
             if (timeSinceLast < 5) bonusTime += 2; 
@@ -639,17 +843,20 @@ export const GameLoop: React.FC<GameLoopProps> = ({ input, isPaused, onScoreUpda
                 car.pos.x = tx * TILE_SIZE + (TILE_SIZE - car.size.x)/2;
                 car.pos.y = ty * TILE_SIZE + (TILE_SIZE - car.size.y)/2;
                 
-                const flows = getTrafficFlow(tx, ty);
+                const flows = getTrafficFlow(tx, ty, s.vRoads, s.hRoads);
                 const bestFlow = flows[0];
                 if (bestFlow) {
                     car.direction = bestFlow.d;
                     car.velocity = { x: bestFlow.x * car.speed, y: bestFlow.y * car.speed };
                 }
             }
-            if (checkCollision(p, car) && !p.isDashing && p.invulnerabilityTimer <= 0) {
+            if (checkCollision(p, car) && !p.isBoosting && p.invulnerabilityTimer <= 0) {
                  p.health -= 1;
                  p.invulnerabilityTimer = 2.0;
                  audio.playHit(); // SFX
+                 const texts = ["OUCH!", "CRASH!", "BEEP BEEP!", "HEY!"];
+                 spawnTextPopup(texts[Math.floor(Math.random()*texts.length)], p.pos, '#ff4d4d');
+                 
                  if (p.health <= 0) {
                      s.isGameOver = true;
                      gameOverReasonRef.current = 'HEALTH';
@@ -670,6 +877,7 @@ export const GameLoop: React.FC<GameLoopProps> = ({ input, isPaused, onScoreUpda
         const distToCenter = Math.abs(carCenterX - targetCenterX) + Math.abs(carCenterY - targetCenterY);
 
         if (distToCenter < car.speed) {
+            // Turning Logic
             if (Math.random() < 0.1) { 
                 const neighbors = [
                     { dx: 1, dy: 0, d: 'right' },
@@ -700,7 +908,7 @@ export const GameLoop: React.FC<GameLoopProps> = ({ input, isPaused, onScoreUpda
                 return s.map[ty][tx] === TileType.ROAD;
             };
 
-            const allowedFlows = getTrafficFlow(tileX, tileY);
+            const allowedFlows = getTrafficFlow(tileX, tileY, s.vRoads, s.hRoads);
             const validOptions = allowedFlows.filter(flow => {
                 const tx = tileX + flow.x;
                 const ty = tileY + flow.y;
@@ -714,6 +922,7 @@ export const GameLoop: React.FC<GameLoopProps> = ({ input, isPaused, onScoreUpda
             });
 
             if (validOptions.length === 0) {
+                 // Dead end or error, teleport home
                  car.state = CarState.PARKED;
                  car.pos = { ...car.homePos };
                  car.velocity = { x: 0, y: 0 };
@@ -757,11 +966,14 @@ export const GameLoop: React.FC<GameLoopProps> = ({ input, isPaused, onScoreUpda
              car.velocity = { x: 0, y: 0 };
         }
 
-        if (checkCollision(p, car) && p.stunned <= 0 && !p.isDashing) {
+        if (checkCollision(p, car) && p.stunned <= 0 && !p.isBoosting) {
             if (p.invulnerabilityTimer <= 0) {
                 p.health -= 1;
                 p.invulnerabilityTimer = 2.0;
                 audio.playHit(); // SFX
+                const texts = ["OUCH!", "CRASH!", "BEEP BEEP!", "HEY!"];
+                spawnTextPopup(texts[Math.floor(Math.random()*texts.length)], p.pos, '#ff4d4d');
+
                 if (p.health <= 0) {
                     s.isGameOver = true;
                     gameOverReasonRef.current = 'HEALTH';
@@ -781,15 +993,25 @@ export const GameLoop: React.FC<GameLoopProps> = ({ input, isPaused, onScoreUpda
             audio.playPowerup(); // SFX
             switch(pup.kind) {
                 case PowerUpType.COFFEE: 
-                    p.buffs.speedBoost = 5.0; 
+                    // Refill boost charge
+                    p.boostCharge = Math.min(p.boostCharge + 1, MAX_BOOST_CHARGE);
+                    p.boostUnlocked = true;
+                    // Heal
                     p.health = Math.min(p.health + 1, p.maxHealth); 
+                    spawnTextPopup("RUN RECHARGE!", p.pos, '#6f4e37');
                     break;
                 case PowerUpType.CLOCK: 
                     s.timer = Math.min(s.timer + 10, INITIAL_TIME); 
+                    spawnTextPopup("+10 SEC", p.pos, '#ffffff');
                     break;
                 case PowerUpType.TRAFFIC_LIGHT: 
                     s.entities.cars.forEach(c => c.frozenTimer = 10.0); 
                     s.trafficPauseTimer = 10.0;
+                    spawnTextPopup("TRAFFIC STOPPED!", p.pos, '#ffcc00');
+                    break;
+                case PowerUpType.RAINCOAT:
+                    p.buffs.puddleImmunity = 10.0;
+                    spawnTextPopup("RAINCOAT!", p.pos, '#f4d03f');
                     break;
             }
             return false; 
@@ -804,12 +1026,19 @@ export const GameLoop: React.FC<GameLoopProps> = ({ input, isPaused, onScoreUpda
         return part.life > 0;
     });
 
+    s.entities.textPopups = s.entities.textPopups.filter(p => {
+        p.life -= deltaTime;
+        p.pos.x += p.velocity.x * deltaTime;
+        p.pos.y += p.velocity.y * deltaTime;
+        return p.life > 0;
+    });
+
     s.camera.x = p.pos.x - window.innerWidth / 2;
     s.camera.y = p.pos.y - window.innerHeight / 2;
     s.camera.x = Math.max(0, Math.min(s.camera.x, MAP_PIXEL_WIDTH - window.innerWidth));
     s.camera.y = Math.max(0, Math.min(s.camera.y, MAP_PIXEL_HEIGHT - window.innerHeight));
 
-    onScoreUpdate(s.score, s.combo, s.timer, p.health);
+    onScoreUpdate(s.score, s.timer, p.health, s.trafficPauseTimer, p.buffs.puddleImmunity, p.boostCharge, p.boostUnlocked);
   };
 
   const drawHouse = (ctx: CanvasRenderingContext2D, h: House) => {
@@ -1077,7 +1306,12 @@ export const GameLoop: React.FC<GameLoopProps> = ({ input, isPaused, onScoreUpda
         ctx.fillStyle = darkBodyColor;
         ctx.beginPath();
         // Slightly rounded rectangular chassis
-        ctx.roundRect(-11, -6, 22, 12, 2);
+        // Fallback for roundRect if not supported (though it is in most modern browsers)
+        if (ctx.roundRect) {
+             ctx.roundRect(-11, -6, 22, 12, 2);
+        } else {
+             ctx.rect(-11, -6, 22, 12);
+        }
         ctx.fill();
 
         // Hood and Trunk differentiation (Top surface)
@@ -1146,28 +1380,7 @@ export const GameLoop: React.FC<GameLoopProps> = ({ input, isPaused, onScoreUpda
             if (tile === TileType.ROAD) {
                 ctx.fillStyle = COLORS.ROAD;
                 ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE);
-                
-                const isVertRoad = (x - 2) % ROAD_INTERVAL_X < ROAD_WIDTH_TILES;
-                const isHorzRoad = (y - 3) % ROAD_INTERVAL_Y < ROAD_WIDTH_TILES;
-                
-                if (isVertRoad && !isHorzRoad) {
-                    if ((x - 2) % ROAD_INTERVAL_X === 1) {
-                         ctx.fillStyle = COLORS.ROAD_MARKING;
-                         for(let i=4; i<TILE_SIZE; i+=16) {
-                            ctx.fillRect(px - 1, py + i, 2, 8); 
-                         }
-                    }
-                }
-                
-                if (isHorzRoad && !isVertRoad) {
-                    if ((y - 3) % ROAD_INTERVAL_Y === 1) {
-                         ctx.fillStyle = COLORS.ROAD_MARKING;
-                         for(let i=4; i<TILE_SIZE; i+=16) {
-                            ctx.fillRect(px + i, py - 1, 8, 2);
-                         }
-                    }
-                }
-
+            
             } else if (tile === TileType.FOOTPATH) {
                 ctx.fillStyle = COLORS.FOOTPATH;
                 ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE);
@@ -1181,13 +1394,36 @@ export const GameLoop: React.FC<GameLoopProps> = ({ input, isPaused, onScoreUpda
                 ctx.fillStyle = COLORS.DRIVEWAY;
                 ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE);
             } else if (tile === TileType.GARDEN) {
-                ctx.fillStyle = COLORS.GARDEN;
+                // Varied garden tiles for interest
+                const variation = (x * 11 + y * 17) % 3;
+                if (variation === 0) ctx.fillStyle = COLORS.GARDEN;
+                else if (variation === 1) ctx.fillStyle = '#447f36'; // slightly darker
+                else ctx.fillStyle = '#569e45'; // slightly lighter
+                
                 ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE);
-                if ((x+y)%2 === 0) {
+                
+                // Flowers?
+                if ((x+y)%5 === 0) {
                      ctx.fillStyle = '#ffb7b2';
                      ctx.beginPath();
                      ctx.arc(px+8, py+8, 2, 0, Math.PI*2);
                      ctx.fill();
+                     ctx.fillStyle = '#ffffba';
+                     ctx.beginPath();
+                     ctx.arc(px+24, py+24, 2, 0, Math.PI*2);
+                     ctx.fill();
+                }
+            } else if (tile === TileType.WATER) {
+                ctx.fillStyle = COLORS.POOL_EDGE;
+                ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE);
+                ctx.fillStyle = COLORS.WATER;
+                ctx.fillRect(px + 2, py + 2, TILE_SIZE - 4, TILE_SIZE - 4);
+                
+                // Ripples
+                if ((x+y + Math.floor(Date.now()/500)) % 2 === 0) {
+                     ctx.fillStyle = COLORS.WATER_RIPPLE;
+                     ctx.fillRect(px + 8, py + 8, 4, 2);
+                     ctx.fillRect(px + 20, py + 20, 6, 2);
                 }
             } else if (tile === TileType.HOUSE) {
                 ctx.fillStyle = '#333';
@@ -1215,6 +1451,9 @@ export const GameLoop: React.FC<GameLoopProps> = ({ input, isPaused, onScoreUpda
     });
 
     s.entities.houses.forEach(h => drawHouse(ctx, h));
+
+    // Draw Cars
+    s.entities.cars.forEach(c => drawCar(ctx, c));
 
     s.entities.puddles.forEach(pud => {
         const cx = pud.pos.x + pud.size.x/2;
@@ -1340,6 +1579,29 @@ export const GameLoop: React.FC<GameLoopProps> = ({ input, isPaused, onScoreUpda
             ctx.beginPath(); ctx.arc(x + 8, y + 12, 2, 0, Math.PI*2); ctx.fill();
             
             ctx.shadowBlur = 0;
+        } else if (p.kind === PowerUpType.RAINCOAT) {
+             const x = p.pos.x;
+             const y = p.pos.y;
+
+             ctx.shadowBlur = 15;
+             ctx.shadowColor = '#f4d03f';
+             
+             ctx.fillStyle = '#f4d03f';
+             ctx.beginPath();
+             ctx.moveTo(x + 8, y + 2); // Top Hood
+             ctx.lineTo(x + 14, y + 14); // Bottom Right
+             ctx.lineTo(x + 2, y + 14); // Bottom Left
+             ctx.closePath();
+             ctx.fill();
+
+             ctx.fillStyle = '#d4ac0d';
+             ctx.fillRect(x + 7, y + 2, 2, 12);
+
+             ctx.strokeStyle = '#fff';
+             ctx.lineWidth = 1;
+             ctx.stroke();
+
+             ctx.shadowBlur = 0;
         } else {
             ctx.fillStyle = POWERUP_COLORS[p.kind];
             ctx.beginPath();
@@ -1351,23 +1613,24 @@ export const GameLoop: React.FC<GameLoopProps> = ({ input, isPaused, onScoreUpda
         }
     });
 
-    s.entities.cars.forEach(car => {
-        drawCar(ctx, car);
-
-        if (car.state === CarState.PARKED) {
-             ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
-             ctx.font = 'bold 12px monospace';
-             ctx.textAlign = 'center';
-             ctx.fillText('P', car.pos.x + car.size.x/2, car.pos.y);
-             ctx.textAlign = 'start'; 
-        }
-    });
-
-    // --- Player (Bicycle Top View) ---
+    // --- Player (Walking Postman Top View) ---
     const p = s.entities.player;
     ctx.save();
     ctx.translate(p.pos.x + p.size.x/2, p.pos.y + p.size.y/2);
     
+    // Draw Immunity Aura
+    if (p.buffs.puddleImmunity > 0) {
+        ctx.save();
+        ctx.strokeStyle = '#f4d03f';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(0, 0, 16, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.fillStyle = 'rgba(244, 208, 63, 0.2)';
+        ctx.fill();
+        ctx.restore();
+    }
+
     let angle = 0;
     if (p.direction === 'right') angle = 0;
     else if (p.direction === 'down') angle = Math.PI / 2;
@@ -1382,33 +1645,60 @@ export const GameLoop: React.FC<GameLoopProps> = ({ input, isPaused, onScoreUpda
         }
     }
 
-    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    const isMoving = Math.abs(inputRef.current.x) > 0.1 || Math.abs(inputRef.current.y) > 0.1;
+    const walkOffset = isMoving ? Math.sin(Date.now() / 50) * 3 : 0;
+
+    // FEET
+    ctx.fillStyle = '#1a1a1a'; // Black shoes
+    // Left Foot
+    ctx.fillRect(-4 + walkOffset, -6, 6, 4);
+    // Right Foot
+    ctx.fillRect(-4 - walkOffset, 2, 6, 4);
+
+    // BODY (Uniform)
+    ctx.fillStyle = COLORS.PLAYER; // Blue
+    // Shoulders/Torso rectangle
     ctx.beginPath();
-    ctx.ellipse(0, 4, 8, 4, 0, 0, Math.PI*2);
+    ctx.roundRect(-5, -7, 10, 14, 3);
     ctx.fill();
 
-    const bikeColor = '#efefef';
-    const wheelColor = '#222';
-    
-    ctx.fillStyle = wheelColor;
-    ctx.fillRect(-10, -2, 6, 4); 
-    ctx.fillRect(6, -2, 6, 4);   
-    
-    ctx.fillStyle = bikeColor;
-    ctx.fillRect(-6, -1, 12, 2); 
-    
-    ctx.fillStyle = '#666';
-    ctx.fillRect(4, -6, 2, 12); 
-    
-    ctx.fillStyle = COLORS.PLAYER; 
+    // MAILBAG (Strap + Bag)
+    ctx.fillStyle = '#8B4513'; // SaddleBrown
+    // Just the bag on the side.
+    ctx.fillRect(-2, 3, 8, 5); // Bag sticking out
+
+    // HEAD
+    ctx.fillStyle = '#ffdbac'; // Skin
     ctx.beginPath();
-    ctx.ellipse(-2, 0, 5, 3, 0, 0, Math.PI*2);
+    ctx.arc(0, 0, 5, 0, Math.PI * 2);
     ctx.fill();
-    
+
+    // CAP (Visor facing +X)
+    ctx.fillStyle = COLORS.PLAYER_ACCENT; // Dark Blue
+    ctx.beginPath();
+    ctx.arc(0, 0, 5.5, Math.PI, 0); // Back of cap
+    ctx.fill();
+    // Visor
+    ctx.fillRect(0, -5.5, 5, 11); // Top of cap
+    ctx.fillStyle = '#1a1a1a'; // Visor rim or just dark blue
     ctx.fillStyle = COLORS.PLAYER_ACCENT;
-    ctx.beginPath();
-    ctx.arc(-2, 0, 3, 0, Math.PI*2); 
-    ctx.fill();
+    ctx.fillRect(3, -5.5, 3, 11); // Brim sticking out forward
+
+    // HANDS / ENVELOPE
+    if (isMoving) {
+        // Hands swinging?
+        ctx.fillStyle = '#ffdbac';
+        ctx.beginPath();
+        ctx.arc(2 - walkOffset, -8, 2.5, 0, Math.PI*2); // Left hand
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(2 + walkOffset, 8, 2.5, 0, Math.PI*2); // Right hand
+        ctx.fill();
+    } else {
+        // Holding envelope static?
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(4, -3, 5, 6); // Envelope
+    }
     
     ctx.globalAlpha = 1;
     ctx.restore();
@@ -1419,6 +1709,24 @@ export const GameLoop: React.FC<GameLoopProps> = ({ input, isPaused, onScoreUpda
         ctx.fillRect(part.pos.x, part.pos.y, part.size.x, part.size.y);
     });
     ctx.globalAlpha = 1;
+
+    // Draw Popups
+    s.entities.textPopups.forEach(popup => {
+        ctx.save();
+        ctx.font = `bold ${popup.fontSize}px "VT323"`;
+        ctx.textAlign = 'center';
+        ctx.globalAlpha = Math.max(0, popup.life);
+        
+        // Outline
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = 'black';
+        ctx.strokeText(popup.text, popup.pos.x, popup.pos.y);
+        
+        // Text
+        ctx.fillStyle = popup.color;
+        ctx.fillText(popup.text, popup.pos.x, popup.pos.y);
+        ctx.restore();
+    });
 
     ctx.restore();
 
@@ -1490,21 +1798,141 @@ export const GameLoop: React.FC<GameLoopProps> = ({ input, isPaused, onScoreUpda
                 
                 if (state.current.isGameOver && !gameOverSentRef.current) {
                     gameOverSentRef.current = true;
-                    ctx.save();
-                    ctx.fillStyle = 'rgba(0,0,0,0.5)';
-                    ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
                     
+                    const w = ctx.canvas.width;
+                    const h = ctx.canvas.height;
+                    
+                    // --- SCREENSHOT GENERATION ---
+                    
+                    // 0. Capture snapshot of game BEFORE darkening
+                    const snapCanvas = document.createElement('canvas');
+                    snapCanvas.width = w;
+                    snapCanvas.height = h;
+                    const snapCtx = snapCanvas.getContext('2d');
+                    if (snapCtx) snapCtx.drawImage(canvasRef.current, 0, 0);
+
+                    // 1. Darken game view
+                    ctx.fillStyle = 'rgba(15, 15, 25, 0.85)';
+                    ctx.fillRect(0, 0, w, h);
+    
+                    // 2. Draw Simple Score Card
+                    const cardW = Math.min(w * 0.9, 340);
+                    const cardH = 480;
+                    const cardX = (w - cardW) / 2;
+                    const cardY = (h - cardH) / 2;
+
+                    // Shadow
+                    ctx.shadowColor = 'rgba(0,0,0,0.5)';
+                    ctx.shadowBlur = 30;
+                    ctx.shadowOffsetY = 15;
+
+                    // Card Body
                     ctx.fillStyle = '#ffffff';
-                    ctx.font = '30px "VT323"';
-                    ctx.textAlign = 'center';
-                    ctx.shadowColor = 'black';
-                    ctx.shadowBlur = 4;
-                    ctx.fillText("PIXEL POSTMAN", ctx.canvas.width/2, ctx.canvas.height/2 - 20);
-                    ctx.fillStyle = '#fbf236';
-                    ctx.font = '40px "VT323"';
-                    ctx.fillText("SCORE: " + state.current.score, ctx.canvas.width/2, ctx.canvas.height/2 + 20);
-                    ctx.restore();
+                    if (ctx.roundRect) {
+                        ctx.beginPath();
+                        ctx.roundRect(cardX, cardY, cardW, cardH, 12);
+                        ctx.fill();
+                    } else {
+                        ctx.fillRect(cardX, cardY, cardW, cardH);
+                    }
                     
+                    // Reset Shadow
+                    ctx.shadowColor = 'transparent';
+                    ctx.shadowBlur = 0;
+                    ctx.shadowOffsetY = 0;
+                    
+                    // Clip to card for header/content
+                    ctx.save();
+                    ctx.beginPath();
+                    if (ctx.roundRect) ctx.roundRect(cardX, cardY, cardW, cardH, 12);
+                    else ctx.rect(cardX, cardY, cardW, cardH);
+                    ctx.clip();
+
+                    // Header
+                    ctx.fillStyle = '#2d2d2d';
+                    ctx.fillRect(cardX, cardY, cardW, 60);
+                    
+                    ctx.fillStyle = '#fbf236';
+                    ctx.font = 'bold 32px "VT323"';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText("PIXEL POSTMAN", cardX + cardW/2, cardY + 30);
+
+                    // Snapshot
+                    const snapMargin = 16;
+                    const snapW = cardW - (snapMargin * 2);
+                    const snapH = snapW * 0.6; // ~16:9
+                    const snapX = cardX + snapMargin;
+                    const snapY = cardY + 76;
+
+                    ctx.fillStyle = '#000';
+                    ctx.fillRect(snapX-2, snapY-2, snapW+4, snapH+4);
+                    
+                    // Draw centered crop of snapshot
+                    const sSize = Math.min(snapCanvas.width, snapCanvas.height);
+                    const sx = (snapCanvas.width - sSize)/2;
+                    const sy = (snapCanvas.height - sSize)/2;
+
+                    ctx.drawImage(snapCanvas, 
+                        sx, sy, sSize, sSize, 
+                        snapX, snapY, snapW, snapH
+                    );
+
+                    // Score Section
+                    const scoreY = snapY + snapH + 35;
+                    ctx.fillStyle = '#6b7280';
+                    ctx.font = '20px "VT323"';
+                    ctx.fillText("TOTAL SCORE", cardX + cardW/2, scoreY);
+                    
+                    ctx.fillStyle = '#111827';
+                    ctx.font = 'bold 72px "VT323"';
+                    ctx.fillText(state.current.score.toString(), cardX + cardW/2, scoreY + 45);
+
+                    // Divider
+                    const divY = scoreY + 80;
+                    ctx.strokeStyle = '#e5e7eb';
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.moveTo(cardX + 40, divY);
+                    ctx.lineTo(cardX + cardW - 40, divY);
+                    ctx.stroke();
+
+                    // Stats Grid
+                    const statsY = divY + 35;
+                    
+                    // Deliveries
+                    ctx.textAlign = 'center';
+                    ctx.fillStyle = '#6b7280';
+                    ctx.font = '18px "VT323"';
+                    ctx.fillText("DELIVERIES", cardX + cardW*0.25, statsY);
+                    ctx.fillStyle = '#111827';
+                    ctx.font = 'bold 28px "VT323"';
+                    ctx.fillText(state.current.deliveries.toString(), cardX + cardW*0.25, statsY + 25);
+
+                    // Rank
+                    let rank = "INTERN";
+                    if (state.current.score >= 10) rank = "MAILMAN";
+                    if (state.current.score >= 25) rank = "COURIER";
+                    if (state.current.score >= 50) rank = "EXPERT";
+                    if (state.current.score >= 80) rank = "LEGEND";
+
+                    ctx.fillStyle = '#6b7280';
+                    ctx.font = '18px "VT323"';
+                    ctx.fillText("RANK", cardX + cardW*0.75, statsY);
+                    ctx.fillStyle = '#4d9be6';
+                    ctx.font = 'bold 28px "VT323"';
+                    ctx.fillText(rank, cardX + cardW*0.75, statsY + 25);
+
+                    // Footer Reason
+                    const footerY = cardY + cardH - 25;
+                    ctx.fillStyle = '#ef4444';
+                    ctx.font = '18px "VT323"';
+                    ctx.textAlign = 'center';
+                    const reason = gameOverReasonRef.current === 'TIMEOUT' ? "TIME UP!" : "CRASHED!";
+                    ctx.fillText(reason, cardX + cardW/2, footerY);
+
+                    ctx.restore();
+    
                     try {
                         const dataUrl = canvasRef.current.toDataURL('image/png');
                         onGameOver(state.current.score, dataUrl, gameOverReasonRef.current);
