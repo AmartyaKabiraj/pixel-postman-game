@@ -72,6 +72,8 @@ export interface House extends Entity {
   drivewayPos: Vector2;
   drivewaySize: Vector2;
   roofColor: string;
+  wallColor: string;
+  style: number; // 0-3: Different architectural styles
   shape: 'rect' | 'L';
   cutoutCorner?: 'tl' | 'tr' | 'bl' | 'br'; // For L-shapes: which corner is missing
 }

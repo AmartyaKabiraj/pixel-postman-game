@@ -1,4 +1,3 @@
-
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { 
   GameState, EntityType, Player, House, Vector2, Car, PowerUpType, Particle, Entity, TileType, CarState, Puddle
@@ -6,7 +5,7 @@ import {
 import { 
   TILE_SIZE, MAP_WIDTH, MAP_HEIGHT, COLORS, MAP_PIXEL_WIDTH, MAP_PIXEL_HEIGHT,
   INITIAL_TIME, PLAYER_SPEED, DASH_SPEED, CAR_SPEED, POWERUP_COLORS,
-  ROAD_INTERVAL_X, ROAD_INTERVAL_Y, ROAD_WIDTH_TILES
+  ROAD_INTERVAL_X, ROAD_INTERVAL_Y, ROAD_WIDTH_TILES, WALL_COLORS
 } from '../constants';
 import { audio } from '../audio';
 
@@ -146,14 +145,18 @@ export const GameLoop: React.FC<GameLoopProps> = ({ input, isPaused, onScoreUpda
 
             // Grid
             // Offset Y by 3 so first road is at y=3, leaving exactly 3 tiles above for a house
-            if ((x - 2) % ROAD_INTERVAL_X < ROAD_WIDTH_TILES || (y - 3) % ROAD_INTERVAL_Y < ROAD_WIDTH_TILES) {
+            // Use safe modulo for negative numbers to prevent top road from being 3 wide (at y=2)
+            const isVertRoad = ((x - 2) % ROAD_INTERVAL_X + ROAD_INTERVAL_X) % ROAD_INTERVAL_X < ROAD_WIDTH_TILES;
+            const isHorzRoad = ((y - 3) % ROAD_INTERVAL_Y + ROAD_INTERVAL_Y) % ROAD_INTERVAL_Y < ROAD_WIDTH_TILES;
+
+            if (isVertRoad || isHorzRoad) {
                 map[y][x] = TileType.ROAD;
             }
         }
     }
 
     // Place Houses
-    const roofColors = [COLORS.HOUSE_ROOF, COLORS.HOUSE_ROOF_DARK, COLORS.HOUSE_ROOF_LIGHT, '#8a6f50', '#a35a40'];
+    const roofColors = [COLORS.HOUSE_ROOF, COLORS.HOUSE_ROOF_DARK, COLORS.HOUSE_ROOF_LIGHT, '#8a6f50', '#a35a40', '#50668a'];
     
     for(let y = 0; y < MAP_HEIGHT - 2; y++) {
         for(let x = 0; x < MAP_WIDTH - 2; x++) {
@@ -265,6 +268,8 @@ export const GameLoop: React.FC<GameLoopProps> = ({ input, isPaused, onScoreUpda
                            drivewayPos: drivewayPos,
                            drivewaySize: { x: TILE_SIZE, y: TILE_SIZE },
                            roofColor: roofColors[Math.floor(Math.random() * roofColors.length)],
+                           wallColor: WALL_COLORS[Math.floor(Math.random() * WALL_COLORS.length)],
+                           style: Math.floor(Math.random() * 4), // 0-3
                            shape: shapeType,
                            cutoutCorner: cutoutCorner
                        });
@@ -813,9 +818,91 @@ export const GameLoop: React.FC<GameLoopProps> = ({ input, isPaused, onScoreUpda
         const rw = h.size.x;
         const rh = h.size.y;
 
+        const drawWindows = (wx: number, wy: number, ww: number, wh: number) => {
+            // Adjust based on style
+            const style = h.style;
+            ctx.fillStyle = '#445'; // Dark blue glass
+            if (style === 2) ctx.fillStyle = '#8ce'; // Modern bright glass
+
+            const winCount = ww > 64 ? 2 : 1;
+            const winW = style === 1 ? 8 : style === 2 ? 24 : 12;
+            const winH = style === 1 ? 20 : style === 2 ? 16 : 12;
+            const yOffset = style === 1 ? 5 : 10;
+
+            for(let i=0; i<winCount; i++) {
+                // Position windows roughly centered in their half/section
+                const sectionW = ww / winCount;
+                const winX = wx + (sectionW * i) + (sectionW - winW) / 2;
+                
+                ctx.fillRect(winX, wy + yOffset, winW, winH);
+                
+                // Frames
+                ctx.strokeStyle = '#fff';
+                ctx.lineWidth = 1;
+                ctx.strokeRect(winX, wy + yOffset, winW, winH);
+
+                // Panes (if not modern)
+                if (style !== 2) {
+                     ctx.beginPath();
+                     ctx.moveTo(winX + winW/2, wy + yOffset);
+                     ctx.lineTo(winX + winW/2, wy + yOffset + winH);
+                     if (style !== 1) {
+                        ctx.moveTo(winX, wy + yOffset + winH/2);
+                        ctx.lineTo(winX + winW, wy + yOffset + winH/2);
+                     }
+                     ctx.stroke();
+                }
+
+                // Shutters (Style 0 only)
+                if (style === 0) {
+                     ctx.fillStyle = h.roofColor;
+                     ctx.fillRect(winX - 4, wy + yOffset, 4, winH);
+                     ctx.fillRect(winX + winW, wy + yOffset, 4, winH);
+                }
+
+                // Flower box (Style 3)
+                if (style === 3) {
+                     ctx.fillStyle = '#5d4037';
+                     ctx.fillRect(winX - 2, wy + yOffset + winH, winW + 4, 4);
+                     // Flowers
+                     ctx.fillStyle = '#ff69b4';
+                     ctx.fillRect(winX, wy + yOffset + winH - 2, 2, 2);
+                     ctx.fillRect(winX + 4, wy + yOffset + winH - 2, 2, 2);
+                     ctx.fillRect(winX + 8, wy + yOffset + winH - 2, 2, 2);
+                }
+            }
+        };
+
         const drawPitchedRect = (x: number, y: number, w: number, rectH: number, ridgeAxis: 'horz' | 'vert') => {
-            ctx.fillStyle = COLORS.HOUSE_WALL;
+            ctx.fillStyle = h.wallColor;
             ctx.fillRect(x, y, w, rectH);
+
+            // Siding / Texture
+            ctx.fillStyle = 'rgba(0,0,0,0.05)';
+            if (h.style === 0) {
+                // Horizontal Siding
+                for(let i=0; i<rectH; i+=4) ctx.fillRect(x, y+i, w, 1);
+            } else if (h.style === 1) {
+                // Vertical Siding
+                for(let i=0; i<w; i+=8) ctx.fillRect(x+i, y, 1, rectH);
+            } else if (h.style === 3) {
+                // Brick-ish noise
+                for(let i=0; i<10; i++) {
+                     ctx.fillRect(x + Math.random()*w, y + Math.random()*rectH, 4, 2);
+                }
+            }
+
+            // Decor: Bush for style 2 (Modern/Stucco)
+            if (h.style === 2) {
+                 ctx.fillStyle = '#2d5a27';
+                 ctx.beginPath();
+                 ctx.arc(x + 4, y + rectH, 6, Math.PI, 0);
+                 ctx.arc(x + w - 4, y + rectH, 6, Math.PI, 0);
+                 ctx.fill();
+            }
+
+            // Draw Windows on this face
+            drawWindows(x, y, w, rectH);
             
             ctx.fillStyle = h.roofColor;
             

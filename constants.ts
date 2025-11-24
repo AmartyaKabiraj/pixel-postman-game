@@ -1,4 +1,5 @@
 
+
 import { PowerUpType } from "./types";
 
 // Display Scaling
@@ -39,6 +40,15 @@ export const COLORS = {
   STREET_LIGHT_POLE: '#444444',
   STREET_LIGHT_BULB: '#ffeb3b',
 };
+
+export const WALL_COLORS = [
+  '#e8dcb5', // Cream
+  '#d6e8b5', // Sage
+  '#b5d6e8', // Pale Blue
+  '#e8b5c2', // Dusty Rose
+  '#dddddd', // Light Grey
+  '#e8ceb5'  // Beige
+];
 
 export const POWERUP_COLORS: Record<PowerUpType, string> = {
   [PowerUpType.COFFEE]: '#6f4e37',
