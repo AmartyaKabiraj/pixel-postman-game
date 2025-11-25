@@ -11,7 +11,8 @@ export enum EntityType {
   PARTICLE = 'PARTICLE',
   TREE = 'TREE',
   STREET_LIGHT = 'STREET_LIGHT',
-  TEXT_POPUP = 'TEXT_POPUP'
+  TEXT_POPUP = 'TEXT_POPUP',
+  PROJECTILE = 'PROJECTILE'
 }
 
 export enum TileType {
@@ -112,6 +113,15 @@ export interface Particle extends Entity {
   color: string;
 }
 
+export interface Projectile extends Entity {
+    startPos: Vector2;
+    targetPos: Vector2;
+    progress: number; // 0 to 1
+    duration: number; // Seconds to reach target
+    arcHeight: number; // Peak height in pixels
+    rotation: number;
+}
+
 export interface GameState {
   isPlaying: boolean;
   isGameOver: boolean;
@@ -132,6 +142,7 @@ export interface GameState {
     particles: Particle[];
     staticObjects: Entity[];
     textPopups: TextPopup[];
+    projectiles: Projectile[];
   };
   camera: Vector2;
 }

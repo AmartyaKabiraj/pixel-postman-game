@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { 
-  GameState, EntityType, Player, House, Vector2, Car, PowerUpType, Particle, Entity, TileType, CarState, Puddle, TextPopup
+  GameState, EntityType, Player, House, Vector2, Car, PowerUpType, Particle, Entity, TileType, CarState, Puddle, TextPopup, Projectile
 } from '../types';
 import { 
   TILE_SIZE, MAP_WIDTH, MAP_HEIGHT, COLORS, MAP_PIXEL_WIDTH, MAP_PIXEL_HEIGHT,
@@ -57,7 +57,8 @@ export const GameLoop: React.FC<GameLoopProps> = ({ input, isPaused, onScoreUpda
       powerups: [],
       particles: [],
       staticObjects: [],
-      textPopups: []
+      textPopups: [],
+      projectiles: []
     },
     camera: { x: 0, y: 0 }
   });
@@ -639,7 +640,8 @@ export const GameLoop: React.FC<GameLoopProps> = ({ input, isPaused, onScoreUpda
         powerups: [],
         particles: [],
         staticObjects,
-        textPopups: []
+        textPopups: [],
+        projectiles: []
       },
       camera: { x: 0, y: 0 }
     };
@@ -826,7 +828,6 @@ export const GameLoop: React.FC<GameLoopProps> = ({ input, isPaused, onScoreUpda
     const targetHouse = s.entities.houses.find(h => h.isTarget);
     if (targetHouse) {
         const dist = getDistance(p.pos, targetHouse.doorPos);
-        // Increased range from 45 to 80 to allow delivery from road since player cannot enter driveways/paths
         if (dist < 80) {
             s.score += 1;
             s.deliveries++;
@@ -840,14 +841,19 @@ export const GameLoop: React.FC<GameLoopProps> = ({ input, isPaused, onScoreUpda
             s.timer = Math.min(s.timer + bonusTime, INITIAL_TIME); 
             s.lastDeliveryTime = performance.now() / 1000;
 
-            for(let i=0; i<10; i++) {
-                s.entities.particles.push({
-                    id: `confetti_${Math.random()}`, type: EntityType.PARTICLE,
-                    pos: { ...targetHouse.doorPos }, size: { x: 3, y: 3 },
-                    velocity: { x: (Math.random()-0.5)*100, y: (Math.random()-0.5)*100 - 50 },
-                    life: 1.0, color: COLORS.TARGET_GLOW
-                });
-            }
+            // Spawn Projectile (Visual of throw)
+            s.entities.projectiles.push({
+                id: `proj_${Date.now()}`,
+                type: EntityType.PROJECTILE,
+                pos: { x: p.pos.x + 7, y: p.pos.y + 7 },
+                size: { x: 8, y: 5 },
+                startPos: { x: p.pos.x + 7, y: p.pos.y + 7 },
+                targetPos: { x: targetHouse.doorPos.x + 6, y: targetHouse.doorPos.y + 6 },
+                progress: 0,
+                duration: 0.3, // 300ms flight time
+                arcHeight: 25,
+                rotation: Math.random() * Math.PI * 2
+            });
 
             targetHouse.isTarget = false;
             let nextHouse = s.entities.houses[Math.floor(Math.random() * s.entities.houses.length)];
@@ -859,6 +865,27 @@ export const GameLoop: React.FC<GameLoopProps> = ({ input, isPaused, onScoreUpda
             activateCar();
         }
     }
+
+    // --- Update Projectiles ---
+    s.entities.projectiles = s.entities.projectiles.filter(proj => {
+        proj.progress += deltaTime / proj.duration;
+        proj.rotation += deltaTime * 10; 
+        
+        if (proj.progress >= 1) {
+            // Reached target
+            // Spawn Confetti here
+            for(let i=0; i<10; i++) {
+                s.entities.particles.push({
+                    id: `confetti_${Math.random()}`, type: EntityType.PARTICLE,
+                    pos: { ...proj.targetPos }, size: { x: 3, y: 3 },
+                    velocity: { x: (Math.random()-0.5)*100, y: (Math.random()-0.5)*100 - 50 },
+                    life: 1.0, color: COLORS.TARGET_GLOW
+                });
+            }
+            return false;
+        }
+        return true;
+    });
 
     // --- Car Logic ---
     for (const car of s.entities.cars) {
@@ -1740,6 +1767,49 @@ export const GameLoop: React.FC<GameLoopProps> = ({ input, isPaused, onScoreUpda
             ctx.lineWidth = 2;
             ctx.stroke();
         }
+    });
+
+    // --- Draw Projectiles ---
+    s.entities.projectiles.forEach(proj => {
+        // Linear interpolation
+        const cx = proj.startPos.x + (proj.targetPos.x - proj.startPos.x) * proj.progress;
+        const cy = proj.startPos.y + (proj.targetPos.y - proj.startPos.y) * proj.progress;
+        
+        // Arc calculation (parabola)
+        const height = Math.sin(proj.progress * Math.PI) * proj.arcHeight;
+        
+        // Draw Shadow
+        ctx.fillStyle = 'rgba(0,0,0,0.3)';
+        ctx.beginPath();
+        ctx.ellipse(cx, cy + 2, 4, 2, 0, 0, Math.PI * 2);
+        ctx.fill();
+        
+        // Draw Envelope
+        ctx.save();
+        ctx.translate(cx, cy - height);
+        ctx.rotate(proj.rotation);
+        
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(-5, -3, 10, 6); // Envelope body
+        
+        ctx.strokeStyle = '#ddd';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(-5, -3, 10, 6); // Border
+
+        // Envelope details
+        ctx.beginPath();
+        ctx.moveTo(-5, -3);
+        ctx.lineTo(0, 1);
+        ctx.lineTo(5, -3);
+        ctx.stroke();
+
+        // Wax seal?
+        ctx.fillStyle = '#cc3333';
+        ctx.beginPath();
+        ctx.arc(0, 0, 1.5, 0, Math.PI * 2);
+        ctx.fill();
+        
+        ctx.restore();
     });
 
     // --- Player (Walking Postman Top View) ---
