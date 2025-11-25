@@ -93,7 +93,6 @@ export const GameLoop: React.FC<GameLoopProps> = ({ input, isPaused, onScoreUpda
         const tile = map[ty][tx];
         
         // Postman only allowed on ROAD. 
-        // Explicitly forbidding Footpath, Driveway, Grass, Garden.
         if (tile !== TileType.ROAD) return false;
     }
     return true;
@@ -199,6 +198,19 @@ export const GameLoop: React.FC<GameLoopProps> = ({ input, isPaused, onScoreUpda
         }
     });
 
+    // --- HELPER: Check Road Adjacency ---
+    const hasAdjacentRoad = (tx: number, ty: number) => {
+        const dirs = [[0,1], [0,-1], [1,0], [-1,0]];
+        for(const [dx, dy] of dirs) {
+            const nx = tx + dx;
+            const ny = ty + dy;
+            if (nx >= 0 && nx < MAP_WIDTH && ny >= 0 && ny < MAP_HEIGHT) {
+                if (map[ny][nx] === TileType.ROAD) return true;
+            }
+        }
+        return false;
+    };
+
     // --- IDENTIFY PARK ZONE ---
     let parkBlock = { x: 0, y: 0, w: 0, h: 0 };
     const blocks: {x:number, y:number, w:number, h:number}[] = [];
@@ -264,69 +276,122 @@ export const GameLoop: React.FC<GameLoopProps> = ({ input, isPaused, onScoreUpda
                     }
 
                     if (clear) {
-                        const shapeType = Math.random() > 0.3 ? 'L' : 'rect';
-                        const w = wTiles * TILE_SIZE;
-                        const h = hTiles * TILE_SIZE;
-                        const pos = { x: x * TILE_SIZE, y: y * TILE_SIZE };
+                        // determine house structure bounds (to handle setbacks from side roads)
+                        let houseX = 0;
+                        let houseY = 0;
+                        let houseW = wTiles;
+                        let houseH = hTiles;
                         
-                        let drivewayPos = { x: pos.x + w - TILE_SIZE, y: pos.y };
-                        let doorPos = { x: pos.x + w/2, y: pos.y + (facing==='up'?0:h) }; 
-                        let cutoutCorner: 'tl'|'tr'|'bl'|'br' | undefined = undefined;
-
-                        if (facing === 'down') {
-                            drivewayPos = { x: pos.x + w - TILE_SIZE, y: pos.y + h - TILE_SIZE };
-                            doorPos = { x: pos.x + TILE_SIZE * 1.5, y: pos.y + h - 8 };
-                            if (shapeType === 'L') cutoutCorner = 'bl';
-                        } else {
-                            drivewayPos = { x: pos.x + w - TILE_SIZE, y: pos.y };
-                            doorPos = { x: pos.x + TILE_SIZE * 1.5, y: pos.y + 8 };
-                             if (shapeType === 'L') cutoutCorner = 'tl';
+                        // Default setbacks (Front/Back)
+                        if (facing === 'up') {
+                            houseY = 1;
+                            houseH -= 1;
+                        } else { // down
+                            houseH -= 1;
                         }
 
-                        // Apply to Map
+                        // Side/Corner setbacks (prevent overflow to sidewalk)
+                        // Left
+                        if (hasAdjacentRoad(x, y + 1)) {
+                            houseX += 1;
+                            houseW -= 1;
+                        }
+                        // Right
+                        if (hasAdjacentRoad(x + wTiles - 1, y + 1)) {
+                            houseW -= 1;
+                        }
+                        // Top (if not front)
+                        if (facing !== 'up' && hasAdjacentRoad(x + 1, y)) {
+                            houseY += 1;
+                            houseH -= 1;
+                        }
+                        // Bottom (if not front)
+                        if (facing !== 'down' && hasAdjacentRoad(x + 1, y + hTiles - 1)) {
+                             houseH -= 1;
+                        }
+
+                        // If house became too small due to constraints, skip structure but make it a garden lot
+                        if (houseW < 2 || houseH < 1) {
+                            houseW = 0; // No house structure
+                        }
+
+                        // Initialize Lot as Garden
                         for(let dy=0; dy<hTiles; dy++) {
-                            for(let dx=0; dx<wTiles; dx++) {
-                                const tileX = x + dx;
-                                const tileY = y + dy;
-                                
-                                map[tileY][tileX] = TileType.GARDEN;
-                                let isHousePart = false;
-                                
-                                if (facing === 'down' && dy < 2) isHousePart = true;
-                                if (facing === 'up' && dy >= 1) isHousePart = true;
-
-                                if (isHousePart && shapeType === 'L') {
-                                    const hDy = facing === 'up' ? dy - 1 : dy;
-                                    if (cutoutCorner === 'tl' && dx < 2 && hDy < 1) isHousePart = false;
-                                    if (cutoutCorner === 'tr' && dx >= 2 && hDy < 1) isHousePart = false;
-                                    if (cutoutCorner === 'bl' && dx < 2 && hDy >= 1) isHousePart = false;
-                                    if (cutoutCorner === 'br' && dx >= 2 && hDy >= 1) isHousePart = false;
-                                }
-
-                                if (isHousePart) map[tileY][tileX] = TileType.HOUSE;
-                            }
+                             for(let dx=0; dx<wTiles; dx++) {
+                                 map[y+dy][x+dx] = TileType.GARDEN;
+                             }
                         }
 
-                        for(let dy=0; dy<hTiles; dy++) map[y+dy][x+wTiles-1] = TileType.DRIVEWAY;
+                        if (houseW > 0) {
+                            const shapeType = Math.random() > 0.3 ? 'L' : 'rect';
+                            const realW = houseW * TILE_SIZE;
+                            const realH = houseH * TILE_SIZE;
+                            const pos = { x: (x + houseX) * TILE_SIZE, y: (y + houseY) * TILE_SIZE };
+                            
+                            // Driveway aligns with new house width
+                            // Standard driveway is on the right side of the structure
+                            let drivewayCol = x + houseX + houseW - 1;
+                            let drivewayPos = { x: drivewayCol * TILE_SIZE, y: pos.y };
+                            let doorPos = { x: pos.x + realW/2, y: pos.y + (facing==='up'?0:realH) }; 
+                            let cutoutCorner: 'tl'|'tr'|'bl'|'br' | undefined = undefined;
 
-                        houses.push({
-                           id: `h_${x}_${y}`,
-                           type: EntityType.HOUSE,
-                           pos: pos,
-                           size: { x: w, y: h },
-                           facing: facing,
-                           isTarget: false,
-                           doorPos: doorPos,
-                           gardenPos: pos,
-                           gardenSize: { x: w, y: h },
-                           drivewayPos: drivewayPos,
-                           drivewaySize: { x: TILE_SIZE, y: TILE_SIZE },
-                           roofColor: roofColors[Math.floor(Math.random() * roofColors.length)],
-                           wallColor: WALL_COLORS[Math.floor(Math.random() * WALL_COLORS.length)],
-                           style: Math.floor(Math.random() * 4), 
-                           shape: shapeType,
-                           cutoutCorner: cutoutCorner
-                       });
+                            if (facing === 'down') {
+                                drivewayPos = { x: drivewayCol * TILE_SIZE, y: pos.y + realH - TILE_SIZE };
+                                doorPos = { x: pos.x + TILE_SIZE * 1.5, y: pos.y + realH - 8 };
+                                if (shapeType === 'L') cutoutCorner = 'bl';
+                            } else {
+                                drivewayPos = { x: drivewayCol * TILE_SIZE, y: pos.y };
+                                doorPos = { x: pos.x + TILE_SIZE * 1.5, y: pos.y + 8 };
+                                if (shapeType === 'L') cutoutCorner = 'tl';
+                            }
+
+                            // Apply House Tiles to Map
+                            for(let dy=0; dy<houseH; dy++) {
+                                for(let dx=0; dx<houseW; dx++) {
+                                    const tileX = x + houseX + dx;
+                                    const tileY = y + houseY + dy;
+                                    
+                                    let isHousePart = true;
+
+                                    if (shapeType === 'L') {
+                                        const hDy = facing === 'up' ? dy - 1 : dy; // Visual fix for L logic offset?
+                                        // Simple L logic relative to rect
+                                        if (cutoutCorner === 'tl' && dx < 2 && dy < 1) isHousePart = false;
+                                        if (cutoutCorner === 'tr' && dx >= houseW-2 && dy < 1) isHousePart = false;
+                                        if (cutoutCorner === 'bl' && dx < 2 && dy >= houseH-1) isHousePart = false;
+                                        if (cutoutCorner === 'br' && dx >= houseW-2 && dy >= houseH-1) isHousePart = false;
+                                    }
+
+                                    if (isHousePart) map[tileY][tileX] = TileType.HOUSE;
+                                }
+                            }
+                            
+                            // Apply Driveway
+                            for(let dy=0; dy<hTiles; dy++) {
+                                if (drivewayCol < MAP_WIDTH) {
+                                    map[y+dy][drivewayCol] = TileType.DRIVEWAY;
+                                }
+                            }
+
+                            houses.push({
+                                id: `h_${x}_${y}`,
+                                type: EntityType.HOUSE,
+                                pos: pos,
+                                size: { x: realW, y: realH },
+                                facing: facing,
+                                isTarget: false,
+                                doorPos: doorPos,
+                                gardenPos: { x: x * TILE_SIZE, y: y * TILE_SIZE },
+                                gardenSize: { x: wTiles * TILE_SIZE, y: hTiles * TILE_SIZE },
+                                drivewayPos: drivewayPos,
+                                drivewaySize: { x: TILE_SIZE, y: TILE_SIZE },
+                                roofColor: roofColors[Math.floor(Math.random() * roofColors.length)],
+                                wallColor: WALL_COLORS[Math.floor(Math.random() * WALL_COLORS.length)],
+                                style: Math.floor(Math.random() * 4), 
+                                shape: shapeType,
+                                cutoutCorner: cutoutCorner
+                            });
+                        }
                     }
                 }
             }
@@ -370,6 +435,8 @@ export const GameLoop: React.FC<GameLoopProps> = ({ input, isPaused, onScoreUpda
                          for(let dy=0; dy<ph; dy++) {
                              for(let dx=0; dx<pw; dx++) {
                                  if (map[y+dy][x+dx] !== TileType.GARDEN) canPool = false;
+                                 // Check if adjacent to road (preserve sidewalk)
+                                 if (hasAdjacentRoad(x+dx, y+dy)) canPool = false;
                              }
                          }
                      }
@@ -759,7 +826,8 @@ export const GameLoop: React.FC<GameLoopProps> = ({ input, isPaused, onScoreUpda
     const targetHouse = s.entities.houses.find(h => h.isTarget);
     if (targetHouse) {
         const dist = getDistance(p.pos, targetHouse.doorPos);
-        if (dist < 45) {
+        // Increased range from 45 to 80 to allow delivery from road since player cannot enter driveways/paths
+        if (dist < 80) {
             s.score += 1;
             s.deliveries++;
             audio.playDelivery(); // SFX
@@ -1356,6 +1424,67 @@ export const GameLoop: React.FC<GameLoopProps> = ({ input, isPaused, onScoreUpda
         ctx.restore();
   };
 
+  const drawFrontFacingPostman = (ctx: CanvasRenderingContext2D, x: number, y: number, s: number, happy: boolean) => {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.scale(s, s);
+    
+    // Centered at 0,0. 
+    // Let's assume we are drawing from -8,-8 to 8,8 (16x16 grid)
+    
+    // HAT
+    ctx.fillStyle = '#2a5d8f';
+    ctx.fillRect(-6, -7, 12, 3); // Main hat
+    ctx.fillRect(-7, -4, 14, 1); // Brim
+    
+    // FACE
+    ctx.fillStyle = '#ffdbac';
+    ctx.fillRect(-5, -4, 10, 5);
+    
+    // EYES
+    ctx.fillStyle = '#000';
+    ctx.fillRect(-3, -3, 2, 2);
+    ctx.fillRect(1, -3, 2, 2);
+    
+    // MOUTH (Happy vs Sad/Neutral)
+    if (happy) {
+        ctx.fillStyle = '#d48c70';
+        ctx.fillRect(-2, 0, 4, 1);
+        ctx.fillStyle = '#e5a58e'; // Cheeks
+        ctx.fillRect(-5, -1, 2, 1);
+        ctx.fillRect(3, -1, 2, 1);
+    } else {
+         ctx.fillStyle = '#d48c70';
+         ctx.fillRect(-2, 0, 4, 1);
+    }
+    
+    // SHIRT
+    ctx.fillStyle = '#4d9be6';
+    ctx.fillRect(-6, 1, 12, 6);
+    
+    // STRAP
+    ctx.fillStyle = '#5c4033';
+    ctx.beginPath();
+    ctx.moveTo(4, 1);
+    ctx.lineTo(-4, 7);
+    ctx.lineTo(-6, 7);
+    ctx.lineTo(2, 1);
+    ctx.fill();
+
+    // PANTS
+    ctx.fillStyle = '#1a1a1a';
+    ctx.fillRect(-5, 7, 4, 3); // Left Leg
+    ctx.fillRect(1, 7, 4, 3);  // Right Leg
+
+    // BAG (On right side/hip)
+    ctx.fillStyle = '#8B4513';
+    ctx.fillRect(-8, 4, 4, 5); // Bag hanging on left
+    ctx.fillStyle = '#a0522d'; // Flap
+    ctx.fillRect(-8, 4, 4, 2);
+    
+    ctx.restore();
+};
+
   const draw = (ctx: CanvasRenderingContext2D) => {
     const s = state.current;
     const { width, height } = ctx.canvas;
@@ -1659,7 +1788,8 @@ export const GameLoop: React.FC<GameLoopProps> = ({ input, isPaused, onScoreUpda
     ctx.fillStyle = COLORS.PLAYER; // Blue
     // Shoulders/Torso rectangle
     ctx.beginPath();
-    ctx.roundRect(-5, -7, 10, 14, 3);
+    if (ctx.roundRect) ctx.roundRect(-5, -7, 10, 14, 3);
+    else ctx.fillRect(-5, -7, 10, 14);
     ctx.fill();
 
     // MAILBAG (Strap + Bag)
@@ -1804,134 +1934,97 @@ export const GameLoop: React.FC<GameLoopProps> = ({ input, isPaused, onScoreUpda
                     
                     // --- SCREENSHOT GENERATION ---
                     
-                    // 0. Capture snapshot of game BEFORE darkening
+                    // 0. Capture snapshot of game (Background)
                     const snapCanvas = document.createElement('canvas');
                     snapCanvas.width = w;
                     snapCanvas.height = h;
                     const snapCtx = snapCanvas.getContext('2d');
                     if (snapCtx) snapCtx.drawImage(canvasRef.current, 0, 0);
 
-                    // 1. Darken game view
-                    ctx.fillStyle = 'rgba(15, 15, 25, 0.85)';
-                    ctx.fillRect(0, 0, w, h);
-    
-                    // 2. Draw Simple Score Card
-                    const cardW = Math.min(w * 0.9, 340);
-                    const cardH = 480;
-                    const cardX = (w - cardW) / 2;
-                    const cardY = (h - cardH) / 2;
+                    // 1. Draw Blurred Background
+                    ctx.filter = 'blur(4px) brightness(0.4)';
+                    ctx.drawImage(snapCanvas, 0, 0);
+                    ctx.filter = 'none';
 
-                    // Shadow
-                    ctx.shadowColor = 'rgba(0,0,0,0.5)';
-                    ctx.shadowBlur = 30;
-                    ctx.shadowOffsetY = 15;
+                    const cx = w / 2;
+                    const cy = h / 2;
 
-                    // Card Body
-                    ctx.fillStyle = '#ffffff';
-                    if (ctx.roundRect) {
-                        ctx.beginPath();
-                        ctx.roundRect(cardX, cardY, cardW, cardH, 12);
-                        ctx.fill();
-                    } else {
-                        ctx.fillRect(cardX, cardY, cardW, cardH);
-                    }
+                    // 2. Logo
+                    ctx.shadowColor = 'rgba(0,0,0,0.8)';
+                    ctx.shadowBlur = 10;
+                    ctx.shadowOffsetY = 4;
                     
-                    // Reset Shadow
-                    ctx.shadowColor = 'transparent';
+                    ctx.fillStyle = '#fbf236';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    
+                    const logoText = "PIXEL POSTMAN";
+                    let logoSize = 80;
+                    ctx.font = `bold ${logoSize}px "VT323"`;
+                    
+                    // Fit text within 90% of screen width
+                    const measured = ctx.measureText(logoText);
+                    if (measured.width > w * 0.9) {
+                        logoSize = Math.floor(logoSize * (w * 0.9 / measured.width));
+                    }
+                    ctx.font = `bold ${logoSize}px "VT323"`;
+                    
+                    ctx.fillText(logoText, cx, h * 0.15);
+                    
+                    // 3. Date
+                    ctx.fillStyle = '#fff';
+                    ctx.font = '24px "VT323"';
+                    ctx.shadowBlur = 0;
+                    ctx.shadowOffsetY = 2;
+                    ctx.fillText(new Date().toLocaleDateString().toUpperCase(), cx, h * 0.22);
+
+                    // 4. Status Illustration (Circle with Pixel Art)
+                    const ilY = cy - 20;
+                    const ilSize = 120;
+                    
+                    // Circle BG
+                    ctx.shadowBlur = 20;
+                    ctx.shadowColor = 'rgba(0,0,0,0.5)';
+                    ctx.fillStyle = '#222034';
+                    ctx.beginPath();
+                    ctx.arc(cx, ilY, ilSize/2 + 10, 0, Math.PI*2);
+                    ctx.fill();
+                    ctx.strokeStyle = '#fff';
+                    ctx.lineWidth = 4;
+                    ctx.stroke();
+
+                    // Draw Character (Scale 5x)
+                    const scale = 5;
                     ctx.shadowBlur = 0;
                     ctx.shadowOffsetY = 0;
                     
-                    // Clip to card for header/content
-                    ctx.save();
-                    ctx.beginPath();
-                    if (ctx.roundRect) ctx.roundRect(cardX, cardY, cardW, cardH, 12);
-                    else ctx.rect(cardX, cardY, cardW, cardH);
-                    ctx.clip();
+                    // Helper to draw pixel sprite centered at cx, ilY
+                    drawFrontFacingPostman(ctx, cx, ilY, scale, state.current.score >= 10);
 
-                    // Header
-                    ctx.fillStyle = '#2d2d2d';
-                    ctx.fillRect(cardX, cardY, cardW, 60);
+                    // 5. Score
+                    const scoreY = cy + 100;
+                    ctx.shadowColor = 'rgba(0,0,0,0.8)';
+                    ctx.shadowBlur = 10;
+                    ctx.shadowOffsetY = 5;
                     
-                    ctx.fillStyle = '#fbf236';
-                    ctx.font = 'bold 32px "VT323"';
-                    ctx.textAlign = 'center';
-                    ctx.textBaseline = 'middle';
-                    ctx.fillText("PIXEL POSTMAN", cardX + cardW/2, cardY + 30);
-
-                    // Snapshot
-                    const snapMargin = 16;
-                    const snapW = cardW - (snapMargin * 2);
-                    const snapH = snapW * 0.6; // ~16:9
-                    const snapX = cardX + snapMargin;
-                    const snapY = cardY + 76;
-
-                    ctx.fillStyle = '#000';
-                    ctx.fillRect(snapX-2, snapY-2, snapW+4, snapH+4);
+                    ctx.fillStyle = '#fff';
+                    ctx.font = 'bold 100px "VT323"';
+                    ctx.fillText(state.current.score.toString(), cx, scoreY);
                     
-                    // Draw centered crop of snapshot
-                    const sSize = Math.min(snapCanvas.width, snapCanvas.height);
-                    const sx = (snapCanvas.width - sSize)/2;
-                    const sy = (snapCanvas.height - sSize)/2;
+                    ctx.font = '30px "VT323"';
+                    ctx.fillStyle = '#ccc';
+                    ctx.fillText("DELIVERIES", cx, scoreY + 40);
 
-                    ctx.drawImage(snapCanvas, 
-                        sx, sy, sSize, sSize, 
-                        snapX, snapY, snapW, snapH
-                    );
-
-                    // Score Section
-                    const scoreY = snapY + snapH + 35;
-                    ctx.fillStyle = '#6b7280';
-                    ctx.font = '20px "VT323"';
-                    ctx.fillText("TOTAL SCORE", cardX + cardW/2, scoreY);
-                    
-                    ctx.fillStyle = '#111827';
-                    ctx.font = 'bold 72px "VT323"';
-                    ctx.fillText(state.current.score.toString(), cardX + cardW/2, scoreY + 45);
-
-                    // Divider
-                    const divY = scoreY + 80;
-                    ctx.strokeStyle = '#e5e7eb';
-                    ctx.lineWidth = 2;
-                    ctx.beginPath();
-                    ctx.moveTo(cardX + 40, divY);
-                    ctx.lineTo(cardX + cardW - 40, divY);
-                    ctx.stroke();
-
-                    // Stats Grid
-                    const statsY = divY + 35;
-                    
-                    // Deliveries
-                    ctx.textAlign = 'center';
-                    ctx.fillStyle = '#6b7280';
-                    ctx.font = '18px "VT323"';
-                    ctx.fillText("DELIVERIES", cardX + cardW*0.25, statsY);
-                    ctx.fillStyle = '#111827';
-                    ctx.font = 'bold 28px "VT323"';
-                    ctx.fillText(state.current.deliveries.toString(), cardX + cardW*0.25, statsY + 25);
-
-                    // Rank
+                    // 6. Rank
                     let rank = "INTERN";
                     if (state.current.score >= 10) rank = "MAILMAN";
                     if (state.current.score >= 25) rank = "COURIER";
                     if (state.current.score >= 50) rank = "EXPERT";
                     if (state.current.score >= 80) rank = "LEGEND";
-
-                    ctx.fillStyle = '#6b7280';
-                    ctx.font = '18px "VT323"';
-                    ctx.fillText("RANK", cardX + cardW*0.75, statsY);
-                    ctx.fillStyle = '#4d9be6';
-                    ctx.font = 'bold 28px "VT323"';
-                    ctx.fillText(rank, cardX + cardW*0.75, statsY + 25);
-
-                    // Footer Reason
-                    const footerY = cardY + cardH - 25;
-                    ctx.fillStyle = '#ef4444';
-                    ctx.font = '18px "VT323"';
-                    ctx.textAlign = 'center';
-                    const reason = gameOverReasonRef.current === 'TIMEOUT' ? "TIME UP!" : "CRASHED!";
-                    ctx.fillText(reason, cardX + cardW/2, footerY);
-
-                    ctx.restore();
+                    
+                    ctx.fillStyle = '#fbf236'; // Yellow
+                    ctx.font = 'bold 40px "VT323"';
+                    ctx.fillText(rank, cx, scoreY + 90);
     
                     try {
                         const dataUrl = canvasRef.current.toDataURL('image/png');

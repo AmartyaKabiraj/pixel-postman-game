@@ -254,7 +254,7 @@ export default function App() {
       <div className="absolute inset-0 pointer-events-none p-4 flex flex-col justify-between">
         
         {/* Top HUD */}
-        <div className="flex flex-col w-full">
+        <div className="flex flex-col w-full pointer-events-none">
             <div className="flex justify-between items-start mb-2">
                 <div className="flex flex-col gap-2 pointer-events-auto">
                     <div className="flex flex-col bg-black/50 p-2 rounded border-2 border-white/20">
@@ -272,25 +272,26 @@ export default function App() {
                     <BoostBar charge={boostCharge} />
                 </div>
 
-                {/* Center Buff Bars */}
-                <div className="flex flex-col items-center mx-2 absolute left-1/2 transform -translate-x-1/2 top-4 w-full max-w-xs pointer-events-none">
-                     <BuffBar label="TRAFFIC STOP" timer={activeBuffs.traffic} max={10} color="#ef4444" />
-                     <BuffBar label="PUDDLE IMMUNITY" timer={activeBuffs.immunity} max={10} color="#facc15" />
-                </div>
-
-                <div className="flex gap-2 pointer-events-auto">
-                    <div className={`flex items-center gap-2 text-3xl font-bold p-2 rounded border-2 bg-black/50 ${time < 10 ? 'text-red-500 animate-pulse border-red-500' : 'text-white border-white/20'}`}>
-                        <IconClock />
-                        {time}
+                <div className="flex flex-col items-end gap-2 pointer-events-auto">
+                    <div className="flex gap-2">
+                        <div className={`flex items-center gap-2 text-3xl font-bold p-2 rounded border-2 bg-black/50 ${time < 10 ? 'text-red-500 animate-pulse border-red-500' : 'text-white border-white/20'}`}>
+                            <IconClock />
+                            {time}
+                        </div>
+                        {gameStarted && !gameOver && (
+                            <button 
+                                className="bg-black/50 p-2 rounded border-2 border-white/20 text-white hover:bg-white/20 active:scale-95 transition-all"
+                                onClick={() => setPaused(!paused)}
+                            >
+                                <IconPause />
+                            </button>
+                        )}
                     </div>
-                    {gameStarted && !gameOver && (
-                        <button 
-                            className="bg-black/50 p-2 rounded border-2 border-white/20 text-white hover:bg-white/20 active:scale-95 transition-all"
-                            onClick={() => setPaused(!paused)}
-                        >
-                            <IconPause />
-                        </button>
-                    )}
+                    {/* Buff Bars moved to right */}
+                    <div className="flex flex-col items-end">
+                         <BuffBar label="TRAFFIC STOP" timer={activeBuffs.traffic} max={10} color="#ef4444" />
+                         <BuffBar label="PUDDLE IMMUNITY" timer={activeBuffs.immunity} max={10} color="#facc15" />
+                    </div>
                 </div>
             </div>
         </div>
