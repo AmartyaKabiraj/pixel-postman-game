@@ -140,7 +140,7 @@ export const RulesContent = () => (
                  <span className="text-xs uppercase tracking-wide opacity-70">Joystick</span>
              </div>
              <div className="flex flex-col items-center gap-2">
-                 <div className="w-12 h-12 rounded-full bg-[#6f4e37] border-b-4 border-[#4a332a] flex items-center justify-center font-bold text-white/90 text-xs shadow-lg active:border-b-0 active:translate-y-1">
+                 <div className="w-12 h-12 rounded-full bg-[#9d4edd] border-b-4 border-[#5a189a] flex items-center justify-center font-bold text-white/90 text-xs shadow-lg active:border-b-0 active:translate-y-1">
                     RUN
                  </div>
                  <span className="text-xs uppercase tracking-wide opacity-70">Button</span>
