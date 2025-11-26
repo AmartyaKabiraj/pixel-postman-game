@@ -237,7 +237,7 @@ export default function App() {
   }
 
   return (
-    <div className="w-full h-screen relative bg-gray-900 text-white select-none overflow-hidden">
+    <div className="fixed inset-0 w-full h-full bg-gray-900 text-white select-none overflow-hidden touch-none">
       
       {/* Main Game Layer */}
       {gameStarted && (
@@ -304,7 +304,7 @@ export default function App() {
         )}
 
         {/* Mobile Controls */}
-        <div className={`flex md:hidden justify-between items-end pointer-events-auto pb-8 ${(paused || gameOver) ? 'opacity-0 pointer-events-none' : ''}`}>
+        <div className={`flex md:hidden justify-between items-end pointer-events-auto pb-12 ${(paused || gameOver) ? 'opacity-0 pointer-events-none' : ''}`}>
              <button 
               className={`w-20 h-20 rounded-full border-4 backdrop-blur shadow-lg flex items-center justify-center font-bold text-xl transition-all duration-300
                   ${boostUnlocked ? 'bg-[#9d4edd]/80 border-[#c77dff] active:bg-[#9d4edd] text-white opacity-100' : 'opacity-0 pointer-events-none scale-0'}

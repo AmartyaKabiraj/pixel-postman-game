@@ -23,7 +23,7 @@ export const HomePage: React.FC<HomePageProps> = ({ onPlay }) => {
   const [showRules, setShowRules] = useState(false);
 
   return (
-    <div className="relative w-full h-screen bg-[#2d2d2d] overflow-hidden font-vt323 text-white">
+    <div className="fixed inset-0 w-full h-full bg-[#2d2d2d] overflow-hidden font-vt323 text-white touch-none">
       {/* Background Illustration */}
       <IsometricBackground />
 
