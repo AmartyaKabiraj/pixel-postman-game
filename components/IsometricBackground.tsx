@@ -1,18 +1,6 @@
 import React, { useRef, useEffect } from 'react';
 import { COLORS } from '../constants';
 
-interface IsoObject {
-    x: number;
-    y: number;
-    w: number;
-    h: number;
-    z: number;
-    H: number;
-    c: string;
-    r: string;
-    type?: string;
-}
-
 export const IsometricBackground: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -124,7 +112,7 @@ export const IsometricBackground: React.FC = () => {
         { x: -8, y: 0, z: 3, size: 2.5, speed: 0.006 }
     ];
 
-    const houses: IsoObject[] = [
+    const houses = [
         { x: -3, y: -3, w: 1, h: 1, z: 0, H: 1.5, c: COLORS.HOUSE_WALL, r: COLORS.HOUSE_ROOF },
         { x: -2, y: -3, w: 1, h: 1, z: 0, H: 1.2, c: '#e8ceb5', r: '#8f563b' },
         { x: 3, y: 3, w: 1, h: 1, z: 0, H: 1.0, c: '#d6e8b5', r: '#d68e6e' },
