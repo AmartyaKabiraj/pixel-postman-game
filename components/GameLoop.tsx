@@ -1402,8 +1402,8 @@ export const GameLoop: React.FC<GameLoopProps> = ({ input, isPaused, onScoreUpda
         ctx.beginPath();
         // Slightly rounded rectangular chassis
         // Fallback for roundRect if not supported (though it is in most modern browsers)
-        if (ctx.roundRect) {
-             ctx.roundRect(-11, -6, 22, 12, 2);
+        if (typeof (ctx as any).roundRect === 'function') {
+             (ctx as any).roundRect(-11, -6, 22, 12, 2);
         } else {
              ctx.rect(-11, -6, 22, 12);
         }
@@ -1858,8 +1858,11 @@ export const GameLoop: React.FC<GameLoopProps> = ({ input, isPaused, onScoreUpda
     ctx.fillStyle = COLORS.PLAYER; // Blue
     // Shoulders/Torso rectangle
     ctx.beginPath();
-    if (ctx.roundRect) ctx.roundRect(-5, -7, 10, 14, 3);
-    else ctx.fillRect(-5, -7, 10, 14);
+    if (typeof (ctx as any).roundRect === 'function') {
+        (ctx as any).roundRect(-5, -7, 10, 14, 3);
+    } else {
+        ctx.rect(-5, -7, 10, 14);
+    }
     ctx.fill();
 
     // MAILBAG (Strap + Bag)
